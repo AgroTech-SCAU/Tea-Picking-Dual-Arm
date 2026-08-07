@@ -69,7 +69,8 @@ endif()
 # ========================= 节点配置(按需修改) ========================= #
 # TODO: 在此列表中添加所有 C++ 节点名称(不带 .cpp 后缀)
 set(NODES
-    # node_name
+    teleop
+    teleop_test
 )
 
 foreach(node IN LISTS NODES)
