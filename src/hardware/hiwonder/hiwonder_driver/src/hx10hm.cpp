@@ -14,6 +14,11 @@
 
 // ! ========================= 接 口 类 方 法 / 函 数 实 现 ========================= ! //
 
+/**
+ * @brief 读取指定舵机的原始位置
+ * @param id 舵机编号
+ * @return 舵机原始位置计数值
+ */
 uint16_t Hx10hm::read_pos_raw(uint8_t id) {
     if(id > 0xFD) {
         throw std::invalid_argument("HX-10HM id 范围必须为 [0, 254)");
@@ -48,6 +53,10 @@ uint16_t Hx10hm::read_pos_raw(uint8_t id) {
     return static_cast<uint16_t>(rx[5]) | (static_cast<uint16_t>(rx[6]) << 8U);
 }
 
+/**
+ * @brief 读取六个舵机的原始位置
+ * @return 按舵机编号顺序排列的原始位置数组
+ */
 std::array<uint16_t, 6> Hx10hm::read_all_pos_raw() {
     std::array<uint16_t, 6> result{};
     for(uint8_t i = 1; i <= 6; ++i) {
@@ -56,6 +65,11 @@ std::array<uint16_t, 6> Hx10hm::read_all_pos_raw() {
     return result;
 }
 
+/**
+ * @brief 将原始位置转换为角度
+ * @param raw 原始位置计数值
+ * @return 相对于中心位置的角度
+ */
 double Hx10hm::raw_to_degree(uint16_t raw) {
     if(raw > 4095U) {
         throw std::out_of_range("HX-10HM 原始数据范围必须为 [0, 4096)");
@@ -67,6 +81,11 @@ double Hx10hm::raw_to_degree(uint16_t raw) {
 
 // ! ========================= 私 有 类 方 法 实 现 ========================= ! //
 
+/**
+ * @brief 计算 HX 10HM 数据包校验和
+ * @param packet 不含校验和字段的数据包
+ * @return 计算得到的校验和
+ */
 uint8_t Hx10hm::check_sum(const std::vector<uint8_t>& packet) {
     if(packet.size() < 5) {
         throw std::invalid_argument("HX-10HM 数据包太短");
