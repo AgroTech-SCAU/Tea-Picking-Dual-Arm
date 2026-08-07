@@ -26,63 +26,173 @@
  */
 class SerialPort {
 public:
+    /**
+     * @brief 单个串口字节类型
+     */
     using Byte = std::uint8_t;
+
+    /**
+     * @brief 串口字节缓冲区类型
+     */
     using Buffer = std::vector<Byte>;
 
+    /**
+     * @brief 奇偶校验方式
+     */
     enum class Parity {
+        /**
+         * @brief 不使用奇偶校验
+         */
         None,
+        /**
+         * @brief 使用偶校验
+         */
         Even,
+        /**
+         * @brief 使用奇校验
+         */
         Odd,
     };
 
+    /**
+     * @brief 停止位数量
+     */
     enum class StopBits {
+        /**
+         * @brief 使用一个停止位
+         */
         One,
+        /**
+         * @brief 使用两个停止位
+         */
         Two,
     };
 
+    /**
+     * @brief 流控制方式
+     */
     enum class FlowControl {
+        /**
+         * @brief 不使用流控制
+         */
         None,
+        /**
+         * @brief 使用软件流控制
+         */
         Software,
+        /**
+         * @brief 使用硬件流控制
+         */
         Hardware,
     };
 
+    /**
+     * @brief 串口缓冲区清空方向
+     */
     enum class FlushDirection {
+        /**
+         * @brief 清空输入缓冲区
+         */
         Input,
+        /**
+         * @brief 清空输出缓冲区
+         */
         Output,
+        /**
+         * @brief 同时清空输入和输出缓冲区
+         */
         Both,
     };
 
+    /**
+     * @brief 串口运行配置
+     */
     struct Config {
+        /**
+         * @brief 波特率
+         */
         std::uint32_t baud_rate{ 115200 };
+        /**
+         * @brief 数据位数量
+         */
         std::uint8_t data_bits{ 8 };
+        /**
+         * @brief 奇偶校验方式
+         */
         Parity parity{ Parity::None };
+        /**
+         * @brief 停止位数量
+         */
         StopBits stop_bits{ StopBits::One };
+        /**
+         * @brief 流控制方式
+         */
         FlowControl flow_control{ FlowControl::None };
+        /**
+         * @brief 单次读取操作的超时时间
+         */
         std::chrono::milliseconds read_timeout{ 2 };
+        /**
+         * @brief 单次写入操作的超时时间
+         */
         std::chrono::milliseconds write_timeout{ 100 };
+        /**
+         * @brief 打开设备后是否清空输入和输出缓冲区
+         */
         bool flush_on_open{ true };
     };
 
+    /**
+     * @brief 构造未打开的串口对象
+     */
     SerialPort() = default;
 
+    /**
+     * @brief 使用默认配置打开指定串口
+     * @param port 串口设备路径
+     */
     explicit SerialPort(std::string port) {
         open(std::move(port));
     }
 
+    /**
+     * @brief 使用指定配置打开串口
+     * @param port 串口设备路径
+     * @param config 串口配置
+     */
     SerialPort(std::string port, const Config& config) {
         open(std::move(port), config);
     }
 
+    /**
+     * @brief 析构并关闭串口
+     */
     ~SerialPort() noexcept {
         close();
     }
 
+    /**
+     * @brief 禁止复制构造
+     */
     SerialPort(const SerialPort&) = delete;
+
+    /**
+     * @brief 禁止复制赋值
+     */
     SerialPort& operator=(const SerialPort&) = delete;
 
+    /**
+     * @brief 移动构造串口对象
+     * @param other 被移动的串口对象
+     */
     SerialPort(SerialPort&& other) noexcept
         : fd_(std::exchange(other.fd_, -1)), port_(std::move(other.port_)), config_(other.config_) {}
 
+    /**
+     * @brief 移动赋值串口对象
+     * @param other 被移动的串口对象
+     * @return 当前串口对象
+     */
     SerialPort& operator=(SerialPort&& other) noexcept {
         if(this != &other) {
             close();
@@ -149,18 +259,34 @@ public:
         port_.clear();
     }
 
+    /**
+     * @brief 查询串口是否已经打开
+     * @return 串口已打开时返回 true
+     */
     [[nodiscard]] bool is_open() const noexcept {
         return fd_ >= 0;
     }
 
+    /**
+     * @brief 获取底层文件描述符
+     * @return 文件描述符或未打开时的负值
+     */
     [[nodiscard]] int native_handle() const noexcept {
         return fd_;
     }
 
+    /**
+     * @brief 获取当前串口设备路径
+     * @return 串口设备路径
+     */
     [[nodiscard]] const std::string& port() const noexcept {
         return port_;
     }
 
+    /**
+     * @brief 获取当前串口配置
+     * @return 当前配置的只读引用
+     */
     [[nodiscard]] const Config& config() const noexcept {
         return config_;
     }
@@ -179,19 +305,29 @@ public:
         config_ = config;
     }
 
+    /**
+     * @brief 设置读取超时时间
+     * @param timeout 新的读取超时时间
+     */
     void set_read_timeout(std::chrono::milliseconds timeout) {
         validate_timeout(timeout, "read_timeout");
         config_.read_timeout = timeout;
     }
 
+    /**
+     * @brief 设置写入超时时间
+     * @param timeout 新的写入超时时间
+     */
     void set_write_timeout(std::chrono::milliseconds timeout) {
         validate_timeout(timeout, "write_timeout");
         config_.write_timeout = timeout;
     }
 
     /**
-     * @brief 读取最多 len 字节
-     * @return 实际读取字节数，超时返回 0
+     * @brief 读取最多 len 字节到指定缓冲区
+     * @param data 接收数据的缓冲区
+     * @param len 缓冲区容量
+     * @return 实际读取字节数
      */
     std::size_t read(Byte* data, std::size_t len) {
         ensure_open();
@@ -221,7 +357,9 @@ public:
     }
 
     /**
-     * @brief 读取最多 max_bytes 字节并返回 Buffer
+     * @brief 读取最多 max_bytes 字节并返回新缓冲区
+     * @param max_bytes 最大读取字节数
+     * @return 实际读取到的字节
      */
     [[nodiscard]] Buffer read(std::size_t max_bytes) {
         Buffer buffer(max_bytes);
@@ -231,7 +369,10 @@ public:
     }
 
     /**
-     * @brief 把读取结果写入调用方提供的 Buffer
+     * @brief 读取最多 max_bytes 字节到指定缓冲区
+     * @param buffer 接收数据的缓冲区
+     * @param max_bytes 最大读取字节数
+     * @return 实际读取字节数
      */
     std::size_t read(Buffer& buffer, std::size_t max_bytes) {
         buffer.resize(max_bytes);
@@ -241,8 +382,10 @@ public:
     }
 
     /**
-     * @brief 在一次总读超时内尽量读取恰好 len 字节
-     * @return 实际读取字节数，超时时可能小于 len
+     * @brief 在一次读取超时预算内尽量读取指定长度
+     * @param data 接收数据的缓冲区
+     * @param len 期望读取字节数
+     * @return 实际读取字节数
      */
     std::size_t read_exact(Byte* data, std::size_t len) {
         ensure_open();
@@ -280,7 +423,9 @@ public:
     }
 
     /**
-     * @brief 在一次总读超时内尽量读取 len 字节并返回 Buffer
+     * @brief 在一次读取超时预算内尽量读取指定长度并返回新缓冲区
+     * @param len 期望读取字节数
+     * @return 实际读取到的字节
      */
     [[nodiscard]] Buffer read_exact(std::size_t len) {
         Buffer buffer(len);
@@ -290,7 +435,10 @@ public:
     }
 
     /**
-     * @brief 在一次总读超时内尽量读取 len 字节到调用方 Buffer
+     * @brief 在一次读取超时预算内尽量读取指定长度到缓冲区
+     * @param buffer 接收数据的缓冲区
+     * @param len 期望读取字节数
+     * @return 实际读取字节数
      */
     std::size_t read_exact(Buffer& buffer, std::size_t len) {
         buffer.resize(len);
@@ -300,8 +448,10 @@ public:
     }
 
     /**
-     * @brief 在一次总写超时内尽量完整发送 len 字节
-     * @return 实际写入 tty 的字节数，超时时可能小于 len
+     * @brief 在一次写入超时预算内尽量发送指定长度
+     * @param data 待发送数据
+     * @param len 待发送字节数
+     * @return 实际写入字节数
      */
     std::size_t write(const Byte* data, std::size_t len) {
         ensure_open();
@@ -341,12 +491,22 @@ public:
     /**
      * @brief 完整发送 Buffer
      */
+    /**
+     * @brief 发送整个字节缓冲区
+     * @param data 待发送缓冲区
+     * @return 实际写入字节数
+     */
     std::size_t write(const Buffer& data) {
         return write(data.data(), data.size());
     }
 
     /**
      * @brief 直接发送短字节序列
+     */
+    /**
+     * @brief 发送初始化列表中的字节
+     * @param data 待发送字节序列
+     * @return 实际写入字节数
      */
     std::size_t write(std::initializer_list<Byte> data) {
         return write(data.begin(), data.size());
@@ -372,6 +532,10 @@ public:
     /**
      * @brief 清空串口内核缓冲区
      */
+    /**
+     * @brief 清空指定方向的串口内核缓冲区
+     * @param direction 要清空的缓冲区方向
+     */
     void flush(FlushDirection direction = FlushDirection::Both) {
         ensure_open();
         flush_fd(fd_, direction);
@@ -391,12 +555,22 @@ public:
     }
 
 private:
+    /**
+     * @brief 检查数据指针和长度是否匹配
+     * @param data 数据缓冲区指针
+     * @param len 数据长度
+     */
     static void validate_buffer(const void* data, std::size_t len) {
         if(data == nullptr && len != 0) {
             throw std::invalid_argument("SerialPort buffer is null while len != 0");
         }
     }
 
+    /**
+     * @brief 检查超时时间是否合法
+     * @param timeout 待检查的超时时间
+     * @param name 超时配置名称
+     */
     static void validate_timeout(
         std::chrono::milliseconds timeout,
         const char* name) {
@@ -405,6 +579,10 @@ private:
         }
     }
 
+    /**
+     * @brief 检查串口配置是否合法
+     * @param config 待检查的串口配置
+     */
     static void validate_config(const Config& config) {
         if(config.data_bits < 5 || config.data_bits > 8) {
             throw std::invalid_argument("SerialPort data_bits must be in [5, 8]");
@@ -420,6 +598,11 @@ private:
         (void)baud_to_speed(config.baud_rate);
     }
 
+    /**
+     * @brief 将数值波特率转换为 termios 波特率常量
+     * @param baud_rate 数值波特率
+     * @return termios 波特率常量
+     */
     static speed_t baud_to_speed(std::uint32_t baud_rate) {
         switch(baud_rate) {
             case 50: return B50;
@@ -487,6 +670,11 @@ private:
         }
     }
 
+    /**
+     * @brief 使用配置初始化文件描述符
+     * @param fd 串口文件描述符
+     * @param config 串口配置
+     */
     static void configure_fd(int fd, const Config& config) {
         struct termios tty {};
         if(::tcgetattr(fd, &tty) < 0) {
@@ -555,6 +743,11 @@ private:
         }
     }
 
+    /**
+     * @brief 清空文件描述符对应的串口缓冲区
+     * @param fd 串口文件描述符
+     * @param direction 要清空的缓冲区方向
+     */
     static void flush_fd(int fd, FlushDirection direction) {
         int queue = TCIOFLUSH;
         switch(direction) {
@@ -574,6 +767,12 @@ private:
         }
     }
 
+    /**
+     * @brief 等待文件描述符具备指定的读写事件
+     * @param events 等待的 poll 事件
+     * @param timeout 等待超时时间
+     * @return 事件就绪时返回 true
+     */
     [[nodiscard]] bool wait_ready(
         short events,
         std::chrono::milliseconds timeout) const {
@@ -621,6 +820,11 @@ private:
         }
     }
 
+    /**
+     * @brief 计算截止时间前的剩余毫秒数
+     * @param deadline 操作截止时间
+     * @return 剩余时间
+     */
     static std::chrono::milliseconds remaining_time(
         const std::chrono::steady_clock::time_point& deadline) {
         const auto now = std::chrono::steady_clock::now();
@@ -636,6 +840,11 @@ private:
         return ms;
     }
 
+    /**
+     * @brief 将毫秒超时时间转换为 poll 参数
+     * @param timeout 毫秒超时时间
+     * @return poll 使用的整数超时时间
+     */
     static int to_poll_timeout(std::chrono::milliseconds timeout) {
         if(timeout.count() < 0) {
             return 0;
@@ -646,12 +855,19 @@ private:
         return static_cast<int>(timeout.count());
     }
 
+    /**
+     * @brief 检查串口是否已打开
+     */
     void ensure_open() const {
         if(fd_ < 0) {
             throw std::logic_error("SerialPort is not open");
         }
     }
 
+    /**
+     * @brief 根据当前 errno 抛出系统错误
+     * @param operation 发生错误的操作名称
+     */
     [[noreturn]] static void throw_system_error(
         const std::string& operation) {
         const int error = errno;
