@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.8)
 
 # ========================= 项目配置(必填) ========================= #
 # TODO: 修改项目名称，必须与 package.xml 中的 <name> 一致
-project(serial_driver)
+project(serial_port)
 
 # ========================= 基本配置 ========================= #
 if(NOT CMAKE_C_STANDARD)
