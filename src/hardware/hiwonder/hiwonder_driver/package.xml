@@ -3,9 +3,9 @@
 <package format="3">
     <!-- ========================= 基本信息(必填) ========================= -->
     <!-- TODO: 包名必须与 CMakeLists.txt 中的 project() 完全一致 -->
-    <name>hiwoner_driver</name>
+    <name>hiwonder_driver</name>
     <version>0.0.1</version>
-    <description>ROS2 ament_cmake feature package</description>
+    <description>Hiwonder device driver library</description>
     <maintainer email="your.email@example.com">Your Name</maintainer>
     <license>MIT</license>
 
@@ -20,6 +20,7 @@
 
     <!-- ========================= 常规依赖(按需添加) ========================= -->
     <!-- TODO: 功能包的 ROS 依赖优先写在这里；如果依赖你自己的接口包，也写在这里 -->
+    <depend>serial_port</depend>
     <!-- <depend>rclcpp</depend> -->
     <!-- <depend>rclpy</depend> -->
     <!-- <depend>std_msgs</depend> -->
@@ -40,8 +41,8 @@
     <!-- <exec_depend>python3-numpy</exec_depend> -->
 
     <!-- ========================= 测试依赖(可选) ========================= -->
-    <test_depend>ament_lint_auto</test_depend>
-    <test_depend>ament_lint_common</test_depend>
+    <!-- <test_depend>ament_lint_auto</test_depend> -->
+    <!-- <test_depend>ament_lint_common</test_depend> -->
     <!-- <test_depend>ament_cmake_gtest</test_depend> -->
     <!-- <test_depend>ament_cmake_pytest</test_depend> -->
 
