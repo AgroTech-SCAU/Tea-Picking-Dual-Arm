@@ -3,7 +3,9 @@ project(hiwonder_driver VERSION 0.0.1 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 
-find_package(serial_port CONFIG REQUIRED)
+if(NOT TARGET serial_port::serial_port)
+    find_package(serial_port CONFIG REQUIRED)
+endif()
 
 add_library(hiwonder_driver STATIC src/hx10hm.cpp)
 

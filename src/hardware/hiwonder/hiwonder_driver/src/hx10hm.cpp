@@ -44,7 +44,7 @@ uint16_t Hx10hm::read_pos_raw(uint8_t id) {
 
     const uint8_t expected = check_sum(std::vector<uint8_t>(rx.begin(), rx.end() - 1));
     if(expected != rx.back()) {
-        throw std::runtime_error("HX-10HM 总数不匹配");
+        throw std::runtime_error("HX-10HM 校验和不匹配");
     }
     if(rx[4] != 0x00) {
         throw std::runtime_error("HX-10HM 错误码为=" + std::to_string(rx[4]));
@@ -59,8 +59,8 @@ uint16_t Hx10hm::read_pos_raw(uint8_t id) {
  */
 std::array<uint16_t, 6> Hx10hm::read_all_pos_raw() {
     std::array<uint16_t, 6> result{};
-    for(uint8_t i = 1; i <= 6; ++i) {
-        result[i] = read_pos_raw(i);
+    for(uint8_t id = 1; id <= 6; ++id) {
+        result[static_cast<std::size_t>(id - 1U)] = read_pos_raw(id);
     }
     return result;
 }
