@@ -82,11 +82,7 @@ std::array<float, 6> Rm65bBringup::read_all_degree() {
     return joint;
 }
 
-void Rm65bBringup::write_all_degree(
-    const std::array<float, 6>& degree,
-    bool follow,
-    int trajectory_mode,
-    int radio) {
+void Rm65bBringup::write_all_degree(const std::array<float, 6>& degree, bool follow, int trajectory_mode, int radio) {
     if(!is_connected()) {
         throw std::logic_error("RM65-B is not connected");
     }
@@ -97,6 +93,23 @@ void Rm65bBringup::write_all_degree(
 
     if(ret != 0) {
         throw std::runtime_error("rm_movej_canfd failed, error code: " + std::to_string(ret));
+    }
+}
+
+void Rm65bBringup::movej_degree(const std::array<float, 6>& degree, int speed_percent, bool block) {
+    if(!is_connected()) {
+        throw std::logic_error("RM65-B is not connected");
+    }
+    if(speed_percent < 1 || speed_percent > 100) {
+        throw std::out_of_range("RM65-B movej speed_percent must be in [1, 100]");
+    }
+
+    auto target = degree;
+
+    const int ret = api_.rm_movej(handle_, target.data(), speed_percent, 0, 0, block ? 1 : 0);
+
+    if(ret != 0) {
+        throw std::runtime_error("rm_movej failed, error code: " + std::to_string(ret));
     }
 }
 

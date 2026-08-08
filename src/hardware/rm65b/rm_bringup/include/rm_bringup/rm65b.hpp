@@ -35,17 +35,13 @@ public:
 
     /**
      * @brief 初始化 SDK 并连接 RM65-B
-     * @param ip RM65-B 控制器 IPv4 地址，例如 192.168.1.18
-     * @param port RM65-B TCP 端口，默认 8080
-     * @throws std::logic_error 当前对象已经连接机械臂
-     * @throws std::runtime_error SDK 初始化失败、创建机械臂连接失败、机械臂信息读取失败或连接到的机械臂不是 6 自由度
+     * @param ip 控制器 IPv4 地址，例如 192.168.1.18
+     * @param port TCP 端口，默认 8080
      */
     void connect(const std::string& ip, int port = 8080);
 
     /**
      * @brief 断开 RM65-B 并销毁 SDK
-     * 可重复调用
-     * 未连接时不会执行任何机械臂操作
      */
     void disconnect() noexcept;
 
@@ -58,57 +54,40 @@ public:
     }
 
     /**
-     * @brief 读取 RM65-B 当前 6 关节角度
-     * @return std::array<float, 6> J1~J6 当前角度，单位 degree
-     * @throws std::logic_error 当前没有连接机械臂
-     * @throws std::runtime_error SDK 读取失败
+     * @brief 读取 RM65-B 当前 J1~J6 角度
+     * @return 角度数组，单位 degree
      */
     [[nodiscard]] std::array<float, 6> read_all_degree();
 
     /**
-     * @brief 通过 CANFD 透传方式发送 6 关节目标角度
+     * @brief 通过 CANFD 透传方式发送六关节目标角度
      * @param degree J1~J6 目标角度，单位 degree
-     * @param follow 跟随模式
-     *        - false 低跟随，V1 默认使用，允许控制器对输入做一定处理
-     *        - true 高跟随，对通信周期要求更严格，官方要求透传周期不超过 10 ms
-     * @param trajectory_mode 高跟随下的轨迹处理模式
-     *        - 0 完全透传
-     *        - 1 曲线拟合
-     *        - 2 滤波
-     *        V1 使用低跟随时保持 0
-     * @param radio 曲线拟合或滤波时的平滑系数
-     *        V1 使用低跟随时保持 0
-     * @throws std::logic_error 当前没有连接机械臂
-     * @throws std::runtime_error rm_movej_canfd() 发送失败
-     * @warning
-     * rm_movej_canfd() 不进行常规关节轨迹规划
-     * 上层必须自行保证目标角连续、限位正确、变化率合理
+     * @param follow false 为低跟随，true 为高跟随
+     * @param trajectory_mode 高跟随轨迹处理模式
+     * @param radio 曲线拟合/滤波平滑系数
+     *
+     * @warning rm_movej_canfd() 不执行常规关节轨迹规划
+     * 上层必须自行保证命令连续性和变化率
      */
     void write_all_degree(const std::array<float, 6>& degree, bool follow = false, int trajectory_mode = 0, int radio = 0);
 
     /**
-     * @brief 发送机械臂轨迹急停命令
-     * @throws std::runtime_error 急停命令发送失败
+     * @brief 使用控制器关节空间规划移动到目标角度
+     * @param degree J1~J6 目标角度，单位 degree
+     * @param speed_percent 规划速度/加速度百分比 [1, 100]
+     * @param block true 等待机械臂到位后返回
+     *
+     * @note 该接口用于归零和启动前慢速对齐，不用于连续遥操作
+     */
+    void movej_degree(const std::array<float, 6>& degree, int speed_percent = 10, bool block = true);
+
+    /**
+     * @brief 发送机械臂轨迹停止命令
      */
     void stop();
 
 private:
-    /**
-     * @brief RealMan SDK C++ 服务对象
-     */
-    RM_Service api_;
-
-    /**
-     * @brief RealMan 机械臂连接句柄
-     */
-    rm_robot_handle* handle_{ nullptr };
-
-    /**
-     * @brief SDK 是否已经通过 rm_init() 完成初始化
-     */
-    bool sdk_initialized_{ false };
+    RM_Service api_;                        ///< SDK 接口对象
+    rm_robot_handle* handle_{ nullptr };    ///< SDK 机械臂句柄，非空表示已连接
+    bool sdk_initialized_{ false };         ///< SDK 初始化状态，true 表示已初始化
 };
-
-// ! ========================= 模 版 方 法 实 现 ========================= ! //
-
-

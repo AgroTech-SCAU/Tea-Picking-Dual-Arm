@@ -35,26 +35,50 @@ add_subdirectory(
 )
 
 add_executable(
-    teleop_test
-    src/teleop_test.cpp
+    teleop
+    src/teleop.cpp
 )
 
 target_include_directories(
-    teleop_test
+    teleop
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_link_libraries(
-    teleop_test
+    teleop
     PRIVATE
         hiwonder_driver
         rm_bringup
 )
 
+target_compile_features(teleop PRIVATE cxx_std_17)
+
+set(REALMAN_SDK_LIBRARY
+    ${TEA_SRC_ROOT}/hardware/rm65b/rm_driver/lib/libapi_cpp.so
+)
+
+set_target_properties(
+    teleop
+    PROPERTIES
+        BUILD_RPATH ${TEA_SRC_ROOT}/hardware/rm65b/rm_driver/lib
+        INSTALL_RPATH "$ORIGIN"
+)
+
 install(
-    TARGETS teleop_test
+    TARGETS teleop
     DESTINATION lib/${PROJECT_NAME}
+)
+
+install(
+    FILES ${REALMAN_SDK_LIBRARY}
+    DESTINATION lib/${PROJECT_NAME}
+)
+
+install(
+    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../../../docs/
+    DESTINATION share/${PROJECT_NAME}/docs
+    OPTIONAL
 )
 
 ament_package()
