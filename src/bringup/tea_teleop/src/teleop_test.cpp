@@ -20,11 +20,10 @@ namespace {
 constexpr std::size_t kJointCount = 6;
 
 // 当前主臂机械安装方向尚未最终标定
-// 先全部使用 +1，只在选项 4 中观察，不确认方向前不要直接进入选项 8
 constexpr std::array<float, kJointCount> kDirection{
     1.0F,
     1.0F,
-    1.0F,
+    -1.0F,
     1.0F,
     1.0F,
     1.0F,
@@ -32,7 +31,7 @@ constexpr std::array<float, kJointCount> kDirection{
 
 constexpr auto kTeleopPeriod = std::chrono::milliseconds{ 20 };
 constexpr float kMaxStepDegree = 1.0F;
-constexpr float kMaxStartErrorDegree = 5.0F;
+constexpr float kMaxStartErrorDegree = 30.0F;
 constexpr float kMaxDeviationFromStartDegree = 15.0F;
 
 std::atomic_bool g_stop_requested{ false };
@@ -116,6 +115,13 @@ std::array<float, kJointCount> master_raw_to_degree(
     return degree;
 }
 
+void ensure_rm_connected(Rm65bBringup& rm, const std::string& rm_ip) {
+    if(!rm.is_connected()) {
+        rm.connect(rm_ip, 8080);
+        std::cout << "RM65-B connection established; it will be reused until exit\n";
+    }
+}
+
 std::array<float, kJointCount> limit_command(
     const std::array<float, kJointCount>& target,
     const std::array<float, kJointCount>& previous,
@@ -123,13 +129,11 @@ std::array<float, kJointCount> limit_command(
     std::array<float, kJointCount> command{};
 
     for(std::size_t i = 0; i < target.size(); ++i) {
-        // 第一阶段连续遥操作只允许机械臂在测试起始姿态附近运动
         const float workspace_limited = std::clamp(
             target[i],
             start[i] - kMaxDeviationFromStartDegree,
             start[i] + kMaxDeviationFromStartDegree);
 
-        // 再限制单周期最大变化量，避免瞬时大跳变
         command[i] = std::clamp(
             workspace_limited,
             previous[i] - kMaxStepDegree,
@@ -203,17 +207,15 @@ void test_mapping_preview(const std::string& serial_device) {
     }
 }
 
-void test_rm_read(const std::string& rm_ip) {
-    Rm65bBringup rm;
-    rm.connect(rm_ip, 8080);
+void test_rm_read(Rm65bBringup& rm, const std::string& rm_ip) {
+    ensure_rm_connected(rm, rm_ip);
 
     const auto joint = rm.read_all_degree();
     print_degree_array("RM65-B current joint", joint);
 }
 
-void test_rm_small_step(const std::string& rm_ip) {
-    Rm65bBringup rm;
-    rm.connect(rm_ip, 8080);
+void test_rm_small_step(Rm65bBringup& rm, const std::string& rm_ip) {
+    ensure_rm_connected(rm, rm_ip);
 
     const auto current = rm.read_all_degree();
     print_degree_array("RM65-B current joint", current);
@@ -246,13 +248,13 @@ void test_rm_small_step(const std::string& rm_ip) {
 }
 
 void test_master_slave_compare(
+    Rm65bBringup& rm,
     const std::string& serial_device,
     const std::string& rm_ip) {
     SerialPort serial(serial_device, make_serial_config());
     Hx10hm master(serial);
 
-    Rm65bBringup rm;
-    rm.connect(rm_ip, 8080);
+    ensure_rm_connected(rm, rm_ip);
 
     const auto raw = master.read_all_pos_raw();
     const auto master_degree = master_raw_to_degree(raw);
@@ -273,13 +275,13 @@ void test_master_slave_compare(
 }
 
 void test_low_follow_teleop(
+    Rm65bBringup& rm,
     const std::string& serial_device,
     const std::string& rm_ip) {
     SerialPort serial(serial_device, make_serial_config());
     Hx10hm master(serial);
 
-    Rm65bBringup rm;
-    rm.connect(rm_ip, 8080);
+    ensure_rm_connected(rm, rm_ip);
 
     const auto first_raw = master.read_all_pos_raw();
     const auto first_target = master_raw_to_degree(first_raw);
@@ -300,8 +302,8 @@ void test_low_follow_teleop(
         }
     }
 
-    int duration_s = prompt_int("测试时长 [1~30] s: ");
-    duration_s = std::clamp(duration_s, 1, 30);
+    int duration_s = prompt_int("测试时长 [1~120] s: ");
+    duration_s = std::clamp(duration_s, 1, 120);
 
     if(!confirm("TELEOP", "确认实体急停可用且机械臂周围安全后输入 TELEOP: ")) {
         std::cout << "已取消\n";
@@ -344,14 +346,13 @@ void test_low_follow_teleop(
     std::cout << "连续遥操作测试结束\n";
 }
 
-void test_rm_stop(const std::string& rm_ip) {
+void test_rm_stop(Rm65bBringup& rm, const std::string& rm_ip) {
     if(!confirm("STOP", "确认要发送 RM65-B 软件停止命令后输入 STOP: ")) {
         std::cout << "已取消\n";
         return;
     }
 
-    Rm65bBringup rm;
-    rm.connect(rm_ip, 8080);
+    ensure_rm_connected(rm, rm_ip);
     rm.stop();
 
     std::cout << "停止命令已发送\n";
@@ -395,6 +396,8 @@ int main(int argc, char** argv) {
         serial_device = argv[2];
     }
 
+    Rm65bBringup rm;
+
     for(;;) {
         print_menu(serial_device, rm_ip);
 
@@ -423,23 +426,23 @@ int main(int argc, char** argv) {
                     break;
 
                 case 5:
-                    test_rm_read(rm_ip);
+                    test_rm_read(rm, rm_ip);
                     break;
 
                 case 6:
-                    test_rm_small_step(rm_ip);
+                    test_rm_small_step(rm, rm_ip);
                     break;
 
                 case 7:
-                    test_master_slave_compare(serial_device, rm_ip);
+                    test_master_slave_compare(rm, serial_device, rm_ip);
                     break;
 
                 case 8:
-                    test_low_follow_teleop(serial_device, rm_ip);
+                    test_low_follow_teleop(rm, serial_device, rm_ip);
                     break;
 
                 case 9:
-                    test_rm_stop(rm_ip);
+                    test_rm_stop(rm, rm_ip);
                     break;
 
                 default:
