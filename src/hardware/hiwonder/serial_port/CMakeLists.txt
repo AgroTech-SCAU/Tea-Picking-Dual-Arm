@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(serial_port VERSION 0.0.1 LANGUAGES CXX)
 
+find_package(ament_cmake REQUIRED)
+
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
 
@@ -41,3 +43,5 @@ install(
     NAMESPACE serial_port::
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/serial_port
 )
+
+ament_package()

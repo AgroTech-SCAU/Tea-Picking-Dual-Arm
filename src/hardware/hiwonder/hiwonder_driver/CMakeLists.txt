@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(hiwonder_driver VERSION 0.0.1 LANGUAGES CXX)
 
+find_package(ament_cmake REQUIRED)
+
 include(GNUInstallDirs)
 
 if(NOT TARGET serial_port::serial_port)
@@ -24,3 +26,5 @@ install(TARGETS hiwonder_driver
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+ament_package()
