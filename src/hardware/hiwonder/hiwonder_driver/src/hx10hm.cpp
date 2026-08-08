@@ -72,7 +72,7 @@ void Hx10hm::write_pos_raw(
     validate_servo_id(id);
 
     if(raw > 4095U) {
-        throw std::out_of_range("HX-10HM V1 目标位置范围必须为 [0, 4095]");
+        throw std::out_of_range("HX-10HM 目标位置范围必须为 [0, 4095]");
     }
     if(speed > 3400U) {
         throw std::out_of_range("HX-10HM 位置模式速度范围必须为 [0, 3400]");

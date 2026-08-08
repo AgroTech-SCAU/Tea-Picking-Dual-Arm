@@ -49,7 +49,7 @@ public:
     /**
      * @brief 写入单个舵机位置目标
      * @param id 舵机 ID
-     * @param raw 目标原始位置，当前 V1 仅允许 [0, 4095]
+     * @param raw 目标原始位置，当前仅允许 [0, 4095]
      * @param speed 位置模式速度，单位 steps/s，允许 [0, 3400]
      * @param acceleration 加速度参数，单位 100 steps/s^2
      *

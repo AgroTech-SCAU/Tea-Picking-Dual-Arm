@@ -48,30 +48,18 @@ struct TeleopConfig {
     /** 慢速遥操作单周期最大关节变化量 */
     float slow_max_step_degree{ 1.0F };
 
-    /**
-     * 不归零启动时允许的最大主从初始角差
-     * V1 固定按 30 deg 作为安全门槛
-     */
+    /** 不归零启动时允许的最大主从初始角差 */
     float max_start_error_degree{ 30.0F };
 
-    /** HX-10HM 主臂归零速度，单位 steps/s */
-    std::uint16_t master_home_speed{ 100 };
-
-    /** HX-10HM 主臂归零加速度，单位 100 steps/s^2 */
-    std::uint8_t master_home_acceleration{ 0 };
-
-    /** 主臂归零判定容差 */
-    float master_home_tolerance_degree{ 2.0F };
-
-    /** 主臂归零等待超时 */
-    int master_home_timeout_s{ 30 };
+    /** 主臂人工零位检查容差 */
+    float master_home_tolerance_degree{ 15.0F };
 
     /** RM65-B 规划归零/全速模式启动前对齐的速度百分比 */
     int slave_home_speed_percent{ 10 };
 };
 
 /**
- * @brief Tea-Picking-Dual-Arm V1 菜单式主从遥操作程序
+ * @brief Tea-Picking-Dual-Arm 菜单式主从遥操作程序
  *
  * 该程序不依赖 ROS 通信机制
  * ROS2/ament_cmake 仅用于当前工作区构建组织
@@ -111,7 +99,6 @@ private:
     void read_slave(ReadMode mode);
     void read_compare(ReadMode mode);
 
-    /** 归零 */
     void home_master_menu();
     void home_slave_menu();
     void home_both_menu();
