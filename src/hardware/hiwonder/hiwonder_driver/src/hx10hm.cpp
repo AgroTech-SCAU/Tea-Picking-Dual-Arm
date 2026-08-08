@@ -11,6 +11,15 @@ void validate_servo_id(std::uint8_t id) {
     }
 }
 
+void validate_position_and_speed(std::uint16_t raw, std::uint16_t speed) {
+    if(raw > 4095U) {
+        throw std::out_of_range("HX-10HM 目标位置范围必须为 [0, 4095]");
+    }
+    if(speed > 3400U) {
+        throw std::out_of_range("HX-10HM 位置模式速度范围必须为 [0, 3400]");
+    }
+}
+
 }  // namespace
 
 std::uint16_t Hx10hm::read_pos_raw(std::uint8_t id) {
@@ -21,37 +30,41 @@ std::uint16_t Hx10hm::read_pos_raw(std::uint8_t id) {
         0xFF,
         id,
         0x04,
-        READ_DATA_ADDR,
+        READ_DATA,
         PRESENT_POS_ADDR,
         0x02,
     };
     tx.push_back(check_sum(tx));
 
-    // 每次读请求前清掉旧回复，避免上一次 WRITE 状态包或残留字节污染本次解析
     serial_.flush(SerialPort::FlushDirection::Input);
 
     if(serial_.write(tx) != tx.size()) {
-        throw std::runtime_error("HX-10HM 请求写入超时");
+        throw std::runtime_error("HX-10HM READ DATA 请求写入超时, id=" + std::to_string(id));
     }
     serial_.drain();
 
-    auto rx = serial_.read_exact(8);
+    const auto rx = serial_.read_exact(8);
     if(rx.size() != 8) {
-        throw std::runtime_error("HX-10HM 响应超时, id=" + std::to_string(id));
+        throw std::runtime_error("HX-10HM READ DATA 响应超时, id=" + std::to_string(id));
     }
     if(rx[0] != 0xFF || rx[1] != 0xFF || rx[2] != id || rx[3] != 0x04) {
-        throw std::runtime_error("HX-10HM 响应 header/id/length 不匹配");
+        throw std::runtime_error(
+            "HX-10HM READ DATA 响应 header/id/length 不匹配, id=" + std::to_string(id));
     }
 
-    const std::uint8_t expected = check_sum(std::vector<std::uint8_t>(rx.begin(), rx.end() - 1));
+    const std::uint8_t expected =
+        check_sum(std::vector<std::uint8_t>(rx.begin(), rx.end() - 1));
     if(expected != rx.back()) {
-        throw std::runtime_error("HX-10HM 校验和不匹配");
+        throw std::runtime_error("HX-10HM READ DATA 校验和不匹配, id=" + std::to_string(id));
     }
     if(rx[4] != 0x00) {
-        throw std::runtime_error("HX-10HM 错误码=" + std::to_string(rx[4]));
+        throw std::runtime_error(
+            "HX-10HM READ DATA 错误码=" + std::to_string(rx[4]) +
+            ", id=" + std::to_string(id));
     }
 
-    return static_cast<std::uint16_t>(rx[5]) | (static_cast<std::uint16_t>(rx[6]) << 8U);
+    return static_cast<std::uint16_t>(rx[5]) |
+        (static_cast<std::uint16_t>(rx[6]) << 8U);
 }
 
 std::array<std::uint16_t, Hx10hm::JOINT_COUNT> Hx10hm::read_all_pos_raw() {
@@ -68,41 +81,68 @@ void Hx10hm::write_pos_raw(
     std::uint8_t id,
     std::uint16_t raw,
     std::uint16_t speed,
-    std::uint8_t acceleration) {
+    std::uint16_t time) {
     validate_servo_id(id);
-
-    if(raw > 4095U) {
-        throw std::out_of_range("HX-10HM 目标位置范围必须为 [0, 4095]");
-    }
-    if(speed > 3400U) {
-        throw std::out_of_range("HX-10HM 位置模式速度范围必须为 [0, 3400]");
-    }
+    validate_position_and_speed(raw, speed);
 
     const std::vector<std::uint8_t> data{
-        acceleration,
         static_cast<std::uint8_t>(raw & 0xFFU),
         static_cast<std::uint8_t>((raw >> 8U) & 0xFFU),
-        0x00,
-        0x00,
+        static_cast<std::uint8_t>(time & 0xFFU),
+        static_cast<std::uint8_t>((time >> 8U) & 0xFFU),
         static_cast<std::uint8_t>(speed & 0xFFU),
         static_cast<std::uint8_t>((speed >> 8U) & 0xFFU),
     };
 
-    write_data(id, GOAL_ACC_ADDR, data);
+    write_data(id, GOAL_POSITION_ADDR, data);
 }
 
-void Hx10hm::write_all_pos_raw(
+void Hx10hm::sync_write_all_pos_raw(
     const std::array<std::uint16_t, JOINT_COUNT>& raw,
     std::uint16_t speed,
-    std::uint8_t acceleration) {
-    for(std::uint8_t id = 1; id <= JOINT_COUNT; ++id) {
-        write_pos_raw(id, raw[static_cast<std::size_t>(id - 1U)], speed, acceleration);
+    std::uint16_t time) {
+    for(const auto value : raw) {
+        validate_position_and_speed(value, speed);
     }
+
+    std::vector<std::uint8_t> tx;
+    tx.reserve(7U + JOINT_COUNT * 7U);
+    tx.push_back(0xFF);
+    tx.push_back(0xFF);
+    tx.push_back(BROADCAST_ID);
+
+    const std::size_t parameter_count = 2U + JOINT_COUNT * 7U;
+    tx.push_back(static_cast<std::uint8_t>(parameter_count + 2U));
+    tx.push_back(SYNC_WRITE);
+    tx.push_back(GOAL_POSITION_ADDR);
+    tx.push_back(0x06);
+
+    for(std::uint8_t id = 1; id <= JOINT_COUNT; ++id) {
+        const auto value = raw[static_cast<std::size_t>(id - 1U)];
+        tx.push_back(id);
+        tx.push_back(static_cast<std::uint8_t>(value & 0xFFU));
+        tx.push_back(static_cast<std::uint8_t>((value >> 8U) & 0xFFU));
+        tx.push_back(static_cast<std::uint8_t>(time & 0xFFU));
+        tx.push_back(static_cast<std::uint8_t>((time >> 8U) & 0xFFU));
+        tx.push_back(static_cast<std::uint8_t>(speed & 0xFFU));
+        tx.push_back(static_cast<std::uint8_t>((speed >> 8U) & 0xFFU));
+    }
+
+    tx.push_back(check_sum(tx));
+
+    serial_.flush(SerialPort::FlushDirection::Input);
+    if(serial_.write(tx) != tx.size()) {
+        throw std::runtime_error("HX-10HM SYNC WRITE 写入超时");
+    }
+    serial_.drain();
 }
 
 void Hx10hm::set_torque(std::uint8_t id, bool enable) {
     validate_servo_id(id);
-    write_data(id, TORQUE_ENABLE_ADDR, { static_cast<std::uint8_t>(enable ? 1U : 0U) });
+    write_data(
+        id,
+        TORQUE_ENABLE_ADDR,
+        { static_cast<std::uint8_t>(enable ? 1U : 0U) });
 }
 
 void Hx10hm::set_all_torque(bool enable) {
@@ -153,16 +193,46 @@ void Hx10hm::write_data(
     tx.push_back(0xFF);
     tx.push_back(id);
     tx.push_back(length);
-    tx.push_back(WRITE_DATA_ADDR);
+    tx.push_back(WRITE_DATA);
     tx.push_back(start_addr);
     tx.insert(tx.end(), data.begin(), data.end());
     tx.push_back(check_sum(tx));
 
-    // 写命令前清空旧输入，避免不同状态返回级别下残留的 ACK 影响后续读操作
     serial_.flush(SerialPort::FlushDirection::Input);
 
     if(serial_.write(tx) != tx.size()) {
-        throw std::runtime_error("HX-10HM WRITE DATA 写入超时");
+        throw std::runtime_error("HX-10HM WRITE DATA 写入超时, id=" + std::to_string(id));
     }
     serial_.drain();
+
+    read_write_status(id);
+}
+
+void Hx10hm::read_write_status(std::uint8_t expected_id) {
+    const auto rx = serial_.read_exact(6);
+    if(rx.size() != 6) {
+        throw std::runtime_error(
+            "HX-10HM WRITE DATA ACK 超时, id=" + std::to_string(expected_id));
+    }
+
+    if(rx[0] != 0xFF || rx[1] != 0xFF ||
+        rx[2] != expected_id || rx[3] != 0x02) {
+        throw std::runtime_error(
+            "HX-10HM WRITE DATA ACK header/id/length 不匹配, id=" +
+            std::to_string(expected_id));
+    }
+
+    const std::uint8_t expected =
+        check_sum(std::vector<std::uint8_t>(rx.begin(), rx.end() - 1));
+    if(expected != rx.back()) {
+        throw std::runtime_error(
+            "HX-10HM WRITE DATA ACK 校验和不匹配, id=" +
+            std::to_string(expected_id));
+    }
+
+    if(rx[4] != 0x00) {
+        throw std::runtime_error(
+            "HX-10HM WRITE DATA ERROR=" + std::to_string(rx[4]) +
+            ", id=" + std::to_string(expected_id));
+    }
 }

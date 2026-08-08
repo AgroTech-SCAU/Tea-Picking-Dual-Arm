@@ -1,6 +1,8 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
+#include <vector>
 
 #include "serial_port/serial_port.hpp"
 
@@ -11,26 +13,26 @@
 // ! ========================= 接 口 类 / 函 数 声 明 ========================= ! //
 
 /**
- * @brief HX 10HM 总线舵机驱动
+ * @brief HX-10HM 总线舵机驱动
  *
- * 项目约定：原始位置 2048 对应主臂关节 0 deg，raw < 2048 为负角，
- * raw > 2048 为正角
+ * 当前项目约定：原始位置 2048 对应主臂关节 0 deg
+ * raw < 2048 为负角，raw > 2048 为正角
  */
 class Hx10hm {
 public:
-    static constexpr std::uint32_t BAUDRATE = 1000000;          ///< HX-10HM 当前工作区使用的通信波特率
-    static constexpr std::uint8_t READ_DATA_ADDR = 0x02;        ///< 协议 READ DATA 指令
-    static constexpr std::uint8_t WRITE_DATA_ADDR = 0x03;       ///< 协议 WRITE DATA 指令
-    static constexpr std::uint8_t TORQUE_ENABLE_ADDR = 0x28;    ///< 协议 WRITE DATA 指令
-    static constexpr std::uint8_t GOAL_ACC_ADDR = 0x29;         ///< 加速度寄存器起始地址，位置扩展写命令从此处连续写入 7 字节
-    static constexpr std::uint8_t PRESENT_POS_ADDR = 0x38;      ///< 当前位置信息高字节地址
-    static constexpr std::uint16_t CENTER_RAW = 2048;           ///< 主臂软件零点，对应 180 deg 机械中位
-    static constexpr std::size_t JOINT_COUNT = 6;               ///< 主臂关节数量
+    static constexpr std::uint32_t BAUDRATE = 1000000;
+    static constexpr std::uint8_t READ_DATA = 0x02;
+    static constexpr std::uint8_t WRITE_DATA = 0x03;
+    static constexpr std::uint8_t SYNC_WRITE = 0x83;
+    static constexpr std::uint8_t BROADCAST_ID = 0xFE;
 
-    /**
-     * @brief 构造 HX-10HM 驱动
-     * @param serial 已经打开并配置为 1 Mbps 8N1 的串口对象
-     */
+    static constexpr std::uint8_t TORQUE_ENABLE_ADDR = 0x28;
+    static constexpr std::uint8_t GOAL_POSITION_ADDR = 0x2A;
+    static constexpr std::uint8_t PRESENT_POS_ADDR = 0x38;
+
+    static constexpr std::uint16_t CENTER_RAW = 2048;
+    static constexpr std::size_t JOINT_COUNT = 6;
+
     explicit Hx10hm(SerialPort& serial) : serial_(serial) {}
 
     /**
@@ -47,34 +49,42 @@ public:
     std::array<std::uint16_t, JOINT_COUNT> read_all_pos_raw();
 
     /**
-     * @brief 写入单个舵机位置目标
+     * @brief 通过普通 WRITE DATA 控制单个舵机转到目标位置
      * @param id 舵机 ID
-     * @param raw 目标原始位置，当前仅允许 [0, 4095]
-     * @param speed 位置模式速度，单位 steps/s，允许 [0, 3400]
-     * @param acceleration 加速度参数，单位 100 steps/s^2
+     * @param raw 目标位置，当前项目仅允许 [0, 4095]
+     * @param speed 速度，单位 steps/s，范围 [0, 3400]
+     * @param time 时间字段，位置模式下通常设 0
      *
-     * @note 该接口只负责下发位置命令，不等待舵机到位
+     * @note 本函数会等待并严格校验舵机返回的 6 字节状态包
+     * @note 只有收到 ERROR=0 的 ACK 才认为写命令成功
      */
-    void write_pos_raw(std::uint8_t id, std::uint16_t raw, std::uint16_t speed, std::uint8_t acceleration = 0);
+    void write_pos_raw(std::uint8_t id, std::uint16_t raw, std::uint16_t speed, std::uint16_t time = 0);
 
     /**
-     * @brief 为 ID 1~6 下发各自的位置目标
-     * @param raw J1~J6 原始目标位置
-     * @param speed 所有关节使用的统一速度
-     * @param acceleration 所有关节使用的统一加速度
+     * @brief 使用 SYNC WRITE 同时控制 ID 1~6 到各自目标位置
+     * @param raw J1~J6 目标位置
+     * @param speed 六个舵机统一速度，单位 steps/s
+     * @param time 时间字段，位置模式下通常设 0
+     *
+     * @note 协议规定 SYNC WRITE 使用广播 ID，因此不会返回状态包
+     * @note 该接口只负责一次同步下发，是否到位由调用方继续读取当前位置确认
      */
-    void write_all_pos_raw(const std::array<std::uint16_t, JOINT_COUNT>& raw, std::uint16_t speed, std::uint8_t acceleration = 0);
+    void sync_write_all_pos_raw(const std::array<std::uint16_t, JOINT_COUNT>& raw, std::uint16_t speed, std::uint16_t time = 0);
 
     /**
      * @brief 设置单个舵机扭矩使能
      * @param id 舵机 ID
-     * @param enable true 使能输出扭矩，false 卸力，可手动拖动
+     * @param enable true 上力，false 卸力
+     *
+     * @note 使用非广播 WRITE DATA，并等待 6 字节 ACK
      */
     void set_torque(std::uint8_t id, bool enable);
 
     /**
-     * @brief 对 ID 1~6 统一设置扭矩使能
-     * @param enable true 使能，false 卸力
+     * @brief 对 ID 1~6 逐个设置扭矩使能并确认 ACK
+     * @param enable true 上力，false 卸力
+     *
+     * @warning 任一 ID 写失败会抛异常；异常恢复时调用方应继续逐个尝试 Torque OFF
      */
     void set_all_torque(bool enable);
 
@@ -100,6 +110,11 @@ private:
      * @param data 连续写入的数据
      */
     void write_data(std::uint8_t id, std::uint8_t start_addr, const std::vector<std::uint8_t>& data);
+
+    /**
+     * @brief 读取并验证写命令状态包 FF FF ID 02 ERROR CHECKSUM
+     */
+    void read_write_status(std::uint8_t expected_id);
 
 private:
     SerialPort& serial_;    ///< 用于底层通信的通用串口对象

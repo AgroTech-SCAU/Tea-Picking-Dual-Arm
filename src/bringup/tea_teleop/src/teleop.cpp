@@ -239,6 +239,10 @@ int TeaTeleop::run() {
                     software_stop();
                     break;
 
+                case 11:
+                    release_master_menu();
+                    break;
+
                 default:
                     std::cout << "未知选项\n";
                     break;
@@ -277,13 +281,14 @@ void TeaTeleop::print_main_menu() const {
         << " 1. 读取主臂\n"
         << " 2. 读取从臂\n"
         << " 3. 主从臂读取对照\n"
-        << " 4. 主臂零位检查（人工摆零）\n"
+        << " 4. 主臂慢速归零\n"
         << " 5. 从臂慢速归零\n"
-        << " 6. 主从臂归零准备\n"
+        << " 6. 主从臂慢速归零\n"
         << " 7. 慢速 Teleop\n"
         << " 8. 全速 Teleop\n"
         << " 9. 修改运行配置\n"
         << "10. RM65-B 软件停止\n"
+        << "11. 主臂卸力 / 异常恢复\n"
         << " 0. 退出\n"
         << "============================================================\n"
         << "说明: 慢速 Teleop = 上层单周期限速 + RM65-B CANFD 低跟随 follow=false\n"
@@ -302,7 +307,9 @@ void TeaTeleop::print_config() const {
         << "teleop_period_ms           = " << config_.teleop_period_ms << "\n"
         << "slow_max_step_degree       = " << config_.slow_max_step_degree << "\n"
         << "max_start_error_degree     = " << config_.max_start_error_degree << " (安全阈值)\n"
-        << "master_zero_tolerance_deg  = " << config_.master_home_tolerance_degree << "\n"
+        << "master_home_tolerance_deg  = " << config_.master_home_tolerance_degree << "\n"
+        << "master_home_speed          = " << config_.master_home_speed << " steps/s\n"
+        << "master_home_timeout_s      = " << config_.master_home_timeout_s << " s\n"
         << "slave_home_speed_percent   = " << config_.slave_home_speed_percent << "%\n"
         << "mapping_direction          = [";
 
@@ -328,9 +335,11 @@ void TeaTeleop::config_menu() {
             << " 6. 修改连续读取打印周期\n"
             << " 7. 修改 Teleop 期望周期\n"
             << " 8. 修改慢速 Teleop 单周期最大角度\n"
-            << " 9. 修改主臂人工零位检查容差\n"
-            << "10. 修改从臂归零/对齐速度百分比\n"
-            << "11. 恢复默认配置\n"
+            << " 9. 修改主臂自动归零到位容差\n"
+            << "10. 修改主臂自动归零速度\n"
+            << "11. 修改主臂自动归零超时\n"
+            << "12. 修改从臂归零/对齐速度百分比\n"
+            << "13. 恢复默认配置\n"
             << " 0. 返回\n";
 
         const int option = prompt_int("选择配置项: ");
@@ -416,17 +425,39 @@ void TeaTeleop::config_menu() {
             }
 
             case 9: {
-                const float value = prompt_float("主臂人工零位检查容差 deg [0.5~10]: ");
-                if(value >= 0.5F && value <= 10.0F) {
+                const float value = prompt_float("主臂自动归零到位容差 deg [0.5~5]: ");
+                if(value >= 0.5F && value <= 5.0F) {
                     config_.master_home_tolerance_degree = value;
                 }
                 else {
-                    std::cout << "范围无效，仅允许 0.5~10 deg\n";
+                    std::cout << "范围无效，仅允许 0.5~5 deg\n";
                 }
                 break;
             }
 
             case 10: {
+                const int value = prompt_int("主臂自动归零速度 steps/s [20~500]: ");
+                if(value >= 20 && value <= 500) {
+                    config_.master_home_speed = static_cast<std::uint16_t>(value);
+                }
+                else {
+                    std::cout << "为保证归零安全，仅允许 20~500 steps/s\n";
+                }
+                break;
+            }
+
+            case 11: {
+                const int value = prompt_int("主臂自动归零超时 s [5~60]: ");
+                if(value >= 5 && value <= 60) {
+                    config_.master_home_timeout_s = value;
+                }
+                else {
+                    std::cout << "范围无效，仅允许 5~60 s\n";
+                }
+                break;
+            }
+
+            case 12: {
                 const int value = prompt_int("从臂归零/对齐速度百分比 [1~30]: ");
                 if(value >= 1 && value <= 30) {
                     config_.slave_home_speed_percent = value;
@@ -437,7 +468,7 @@ void TeaTeleop::config_menu() {
                 break;
             }
 
-            case 11:
+            case 13:
                 rm_.disconnect();
                 config_ = TeleopConfig{};
                 std::cout << "已恢复默认配置\n";
@@ -621,11 +652,12 @@ void TeaTeleop::home_slave_menu() {
 void TeaTeleop::home_both_menu() {
     if(!confirm_token(
         "HOME_BOTH",
-        "从臂将慢速回零，主臂需要人工摆到 2048 零位附近，确认安全后输入 HOME_BOTH: ")) {
+        "主从臂都将自动慢速回到零点，确认两侧运动路径安全后输入 HOME_BOTH: ")) {
         std::cout << "已取消\n";
         return;
     }
 
+    // 先让 RM65-B 规划回零，再驱动 HX-10HM 主臂回 2048
     if(!home_slave(false)) {
         return;
     }
@@ -635,42 +667,171 @@ void TeaTeleop::home_both_menu() {
     (void)home_master(master, false);
 }
 
+void TeaTeleop::release_master_menu() {
+    if(!confirm_token(
+        "RELEASE_MASTER",
+        "将向 HX-10HM ID1~6 逐个发送 Torque OFF，输入 RELEASE_MASTER: ")) {
+        std::cout << "已取消\n";
+        return;
+    }
+
+    SerialPort serial(config_.serial_device, make_serial_config());
+    Hx10hm master(serial);
+
+    if(release_master_torque(master)) {
+        std::cout << "主臂 ID1~6 已全部确认卸力\n";
+    }
+    else {
+        std::cerr
+            << "[WARNING] 存在舵机未能确认 Torque OFF\n"
+            << "          请先停止操作，必要时断电重启主臂后再继续\n";
+    }
+}
+
 bool TeaTeleop::home_master(Hx10hm& master, bool require_confirmation) {
     if(require_confirmation &&
         !confirm_token(
-            "CHECK_MASTER",
-            "请手动将主臂摆到零位附近，输入 CHECK_MASTER 开始检查: ")) {
+            "HOME_MASTER",
+            "主臂 HX-10HM 将上力并以低速自动回到 raw=2048，确认无机械干涉后输入 HOME_MASTER: ")) {
         std::cout << "已取消\n";
         return false;
     }
 
+    const auto before_raw = master.read_all_pos_raw();
+    print_master_line(before_raw, master_raw_to_degree(before_raw));
+
     std::cout
-        << "主臂零位检查已开始\n"
-        << "- HX-10HM 全程只读，不发送 Torque/Position/Mode 写命令\n"
-        << "- 请手动移动各关节，使其进入 +/- "
-        << config_.master_home_tolerance_degree
-        << " deg 范围\n"
-        << "- 按 Ctrl+C 可取消并返回菜单\n";
+        << "主臂自动归零开始\n"
+        << "- 目标: ID1~6 raw=2048\n"
+        << "- 速度: " << config_.master_home_speed << " steps/s\n"
+        << "- 到位容差: +/- " << config_.master_home_tolerance_degree << " deg\n"
+        << "- 超时: " << config_.master_home_timeout_s << " s\n"
+        << "- Ctrl+C 会中断归零并立即尝试逐个 Torque OFF\n";
 
     clear_interrupt();
+    bool torque_may_be_enabled = false;
 
-    while(!interrupted()) {
-        const auto raw = master.read_all_pos_raw();
-        const auto degree = master_raw_to_degree(raw);
-        print_master_line(raw, degree);
+    try {
+        // WRITE DATA 为非广播写，协议要求每个 ID 返回
+        // FF FF ID 02 ERROR CHECKSUM
+        // Hx10hm::set_all_torque() 会逐个等待并校验这个 ACK
+        torque_may_be_enabled = true;
+        master.set_all_torque(true);
 
-        if(all_master_near_zero(raw, config_.master_home_tolerance_degree)) {
-            std::cout << "主臂已进入人工零位允许范围\n";
-            clear_interrupt();
-            return true;
+        // 给舵机一个很短的上力稳定时间，再一次性同步下发六关节目标
+        std::this_thread::sleep_for(std::chrono::milliseconds{ 30 });
+
+        std::array<std::uint16_t, kJointCount> zero_raw{};
+        zero_raw.fill(Hx10hm::CENTER_RAW);
+
+        // SYNC WRITE 使用广播 ID，无状态包返回
+        // 随后持续 READ DATA 验证真实位置，而不是把“发送成功”当作“已经到位”
+        master.sync_write_all_pos_raw(
+            zero_raw,
+            config_.master_home_speed,
+            0);
+
+        const auto deadline =
+            std::chrono::steady_clock::now() +
+            std::chrono::seconds{ config_.master_home_timeout_s };
+
+        std::size_t transient_read_failures = 0;
+
+        while(!interrupted()) {
+            try {
+                const auto raw = master.read_all_pos_raw();
+                transient_read_failures = 0;
+
+                print_master_line(raw, master_raw_to_degree(raw));
+
+                if(all_master_near_zero(raw, config_.master_home_tolerance_degree)) {
+                    const bool released = release_master_torque(master);
+                    torque_may_be_enabled = false;
+
+                    if(!released) {
+                        throw std::runtime_error(
+                            "主臂已到零点，但至少一个 HX-10HM 未能确认 Torque OFF");
+                    }
+
+                    std::cout << "主臂已自动回到零点并确认卸力\n";
+                    clear_interrupt();
+                    return true;
+                }
+            }
+            catch(const std::exception& e) {
+                ++transient_read_failures;
+                std::cerr
+                    << "[WARNING] 主臂归零过程读取失败 "
+                    << transient_read_failures << "/3: "
+                    << e.what() << "\n";
+
+                if(transient_read_failures >= 3U) {
+                    throw;
+                }
+            }
+
+            if(std::chrono::steady_clock::now() >= deadline) {
+                throw std::runtime_error("主臂自动归零超时");
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds{ 100 });
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds{ 200 });
+        const bool released = release_master_torque(master);
+        torque_may_be_enabled = false;
+        clear_interrupt();
+
+        if(!released) {
+            throw std::runtime_error(
+                "主臂归零已中断，且至少一个 HX-10HM 未能确认 Torque OFF");
+        }
+
+        std::cout << "主臂归零已由用户中断，主臂已确认卸力\n";
+        return false;
+    }
+    catch(...) {
+        if(torque_may_be_enabled) {
+            const bool released = release_master_torque(master);
+            if(!released) {
+                std::cerr
+                    << "[CRITICAL] 主臂归零异常后无法确认全部 Torque OFF\n"
+                    << "           请不要继续 Teleop，先断电检查/重启主臂\n";
+            }
+        }
+
+        clear_interrupt();
+        throw;
+    }
+}
+
+bool TeaTeleop::release_master_torque(Hx10hm& master) noexcept {
+    bool all_released = true;
+
+    for(std::uint8_t id = 1; id <= Hx10hm::JOINT_COUNT; ++id) {
+        bool released = false;
+
+        // 卸力是异常恢复路径，单个 ID 最多尝试两次
+        for(int attempt = 1; attempt <= 2 && !released; ++attempt) {
+            try {
+                master.set_torque(id, false);
+                released = true;
+            }
+            catch(const std::exception& e) {
+                std::cerr
+                    << "[WARNING] HX-10HM ID" << static_cast<int>(id)
+                    << " Torque OFF 第 " << attempt
+                    << " 次失败: " << e.what() << "\n";
+
+                std::this_thread::sleep_for(std::chrono::milliseconds{ 20 });
+            }
+        }
+
+        if(!released) {
+            all_released = false;
+        }
     }
 
-    std::cout << "主臂零位检查已由用户中断\n";
-    clear_interrupt();
-    return false;
+    return all_released;
 }
 
 bool TeaTeleop::home_slave(bool require_confirmation) {
@@ -709,17 +870,17 @@ void TeaTeleop::teleop(TeleopMode mode) {
         << config_.max_start_error_degree
         << " deg 将拒绝启动\n";
 
-    const bool return_zero = prompt_yes_no("开始 Teleop 前是否执行归零准备（从臂回零 + 主臂人工摆零）? [y/N]: ");
+    const bool return_zero = prompt_yes_no("开始 Teleop 前是否让主从臂都自动慢速回零? [y/N]: ");
 
     if(return_zero) {
         if(!confirm_token(
             "ZERO",
-            "确认从臂回零路径安全，并准备人工摆正主臂后输入 ZERO: ")) {
+            "确认主从臂回零路径均安全后输入 ZERO: ")) {
             std::cout << "已取消 Teleop\n";
             return;
         }
 
-        // 先让从臂规划回零，再等待用户人工摆正主臂
+        // 先让从臂规划回零，再让主臂自动回到 raw=2048 并卸力
         if(!home_slave(false)) {
             return;
         }
@@ -738,6 +899,11 @@ void TeaTeleop::teleop(TeleopMode mode) {
 
     validate_start_error(first_target, slave_start);
 
+    const int effective_period_ms =
+        mode == TeleopMode::Full
+        ? std::min(config_.teleop_period_ms, 10)
+        : config_.teleop_period_ms;
+
     std::cout
         << "模式: "
         << (mode == TeleopMode::Slow ? "慢速" : "全速")
@@ -745,7 +911,8 @@ void TeaTeleop::teleop(TeleopMode mode) {
         << (config_.teleop_duration_s < 0
             ? std::string("-1 / Ctrl+C 停止")
             : std::to_string(config_.teleop_duration_s) + " s")
-        << "\n期望周期: " << config_.teleop_period_ms << " ms\n";
+        << "\n配置周期: " << config_.teleop_period_ms << " ms"
+        << "\n实际周期: " << effective_period_ms << " ms\n";
 
     if(mode == TeleopMode::Slow) {
         std::cout
@@ -837,7 +1004,7 @@ void TeaTeleop::teleop(TeleopMode mode) {
                 last_status = status_now;
             }
 
-            next_tick += std::chrono::milliseconds{ config_.teleop_period_ms };
+            next_tick += std::chrono::milliseconds{ effective_period_ms };
             const auto after_work = std::chrono::steady_clock::now();
 
             if(next_tick > after_work) {

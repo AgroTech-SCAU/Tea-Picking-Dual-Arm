@@ -51,8 +51,14 @@ struct TeleopConfig {
     /** 不归零启动时允许的最大主从初始角差 */
     float max_start_error_degree{ 30.0F };
 
-    /** 主臂人工零位检查容差 */
-    float master_home_tolerance_degree{ 15.0F };
+    /** 主臂自动归零到位容差 */
+    float master_home_tolerance_degree{ 2.0F };
+
+    /** 主臂自动归零速度，单位 steps/s */
+    std::uint16_t master_home_speed{ 100 };
+
+    /** 主臂自动归零最长等待时间 */
+    int master_home_timeout_s{ 30 };
 
     /** RM65-B 规划归零/全速模式启动前对齐的速度百分比 */
     int slave_home_speed_percent{ 10 };
@@ -102,8 +108,10 @@ private:
     void home_master_menu();
     void home_slave_menu();
     void home_both_menu();
+    void release_master_menu();
     bool home_master(Hx10hm& master, bool require_confirmation);
     bool home_slave(bool require_confirmation);
+    bool release_master_torque(Hx10hm& master) noexcept;
 
     /** 遥操作 */
     void teleop(TeleopMode mode);
