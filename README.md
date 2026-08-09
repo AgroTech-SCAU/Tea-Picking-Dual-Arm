@@ -147,23 +147,157 @@ sudo usermod -aG dialout $USER
 | Controller IP | `192.168.1.18` |
 | TCP port | `8080` |
 | PC Ethernet | 推荐 `192.168.1.100/24` |
+| Subnet mask | `255.255.255.0` |
 
-PC 与 RM65-B 必须位于同一 IPv4 网段
+RM65-B 控制器默认有线地址为 `192.168.1.18`，TCP 控制端口为 `8080`；PC 有线网口必须配置到同一 IPv4 网段，本项目推荐固定为 `192.168.1.100/24`
 
-连接前建议先确认：
+#### Ubuntu 有线网络配置
+
+先确认电脑实际的 Ethernet 设备名：
 
 ```bash
-ping -c 4 192.168.1.18
-nc -vz 192.168.1.18 8080
+nmcli device status
 ```
 
-如果电脑同时连接 Wi-Fi，确认访问机械臂的路由确实经过有线网卡：
+例如本项目当前测试主机使用：
+
+```text
+enp4s0  ethernet
+```
+
+设备名以当前机器实际输出为准，不要直接照抄 `enp4s0`
+
+先确认物理链路：
+
+```bash
+sudo ethtool enp4s0 | grep "Link detected"
+```
+
+正常应输出：
+
+```text
+Link detected: yes
+```
+
+如果为 `no`，优先检查控制器网口、网线和电脑网口，不需要继续排查 SDK
+
+本项目的 RM65-B 直连链路采用静态 IPv4，不依赖 `Automatic (DHCP)`；如果有线连接长期显示 `connecting` 后又变回 `disconnected / connect off`，优先检查 PC 是否没有获得 `192.168.1.x` IPv4 地址
+
+查看已有 NetworkManager 连接：
+
+```bash
+nmcli connection show
+```
+
+假设有线连接名称为 `有线连接 1`，绑定网卡为 `enp4s0`，可直接配置静态 IPv4：
+
+```bash
+sudo nmcli connection modify "有线连接 1" \
+  connection.interface-name enp4s0 \
+  ipv4.method manual \
+  ipv4.addresses 192.168.1.100/24 \
+  ipv4.gateway "" \
+  ipv4.dns "" \
+  ipv6.method disabled
+
+sudo nmcli connection up "有线连接 1"
+```
+
+本机直连 RM65-B 时不需要额外配置 Gateway 或 DNS
+
+配置后确认有线网卡已经获得 IPv4：
+
+```bash
+ip -br addr show enp4s0
+```
+
+期望包含：
+
+```text
+enp4s0  UP  192.168.1.100/24
+```
+
+只有 `fe80::...` 表示当前只有 IPv6 link-local 地址，仍未完成 RM65-B 所需的 IPv4 配置
+
+#### 连通性检查
+
+首先确认到机械臂的路由确实走有线网卡：
 
 ```bash
 ip route get 192.168.1.18
 ```
 
-期望结果中包含对应 Ethernet 设备和 `src 192.168.1.100`
+期望类似：
+
+```text
+192.168.1.18 dev enp4s0 src 192.168.1.100
+```
+
+然后测试 IP 层：
+
+```bash
+ping -c 4 192.168.1.18
+```
+
+Ping 正常后再测试 SDK 使用的 TCP 端口：
+
+```bash
+nc -vz 192.168.1.18 8080
+```
+
+正常情况下应看到 `8080` 连接成功；随后再启动 `tea_teleop`
+
+如果未安装 `nc`：
+
+```bash
+sudo apt install netcat-openbsd
+```
+
+#### Wi-Fi 与有线网段冲突
+
+电脑可以同时保持 Wi-Fi 联网，但如果 Wi-Fi 也处于 `192.168.1.0/24` 网段，Linux 可能把访问 `192.168.1.18` 的流量错误地发往 Wi-Fi
+
+始终以：
+
+```bash
+ip route get 192.168.1.18
+```
+
+确认目标路由为 Ethernet 设备；如果显示 `dev wlo1` 或其他 Wi-Fi 设备，可临时关闭 Wi-Fi 验证：
+
+```bash
+nmcli radio wifi off
+```
+
+测试结束后恢复：
+
+```bash
+nmcli radio wifi on
+```
+
+#### RM65-B 网络故障快速判断
+
+| 检查结果 | 说明 | 优先处理 |
+| --- | --- | --- |
+| `Link detected: no` | Ethernet 物理链路未建立 | 检查网线、控制器网口、电脑网口 |
+| `Link detected: yes`，但没有 `192.168.1.x` | PC IPv4 未配置 | 设置静态 `192.168.1.100/24` |
+| `ip route get` 走 Wi-Fi | 路由冲突 | 修正路由或临时关闭 Wi-Fi |
+| Ping 不通 | IP 层未打通 | 检查 PC 网段和机械臂实际 IP |
+| Ping 通但 `8080` 不通 | TCP 服务不可达 | 检查控制器状态、端口和机械臂 IP |
+| Ping 与 `8080` 都正常但 SDK 失败 | 网络基本正常 | 再检查 RealMan SDK 调用和程序参数 |
+
+若程序出现：
+
+```text
+[rm_create_robot_arm] socket connect err!
+[FAILED] rm_create_robot_arm failed: 192.168.1.18:8080
+```
+
+不要先修改 Teleop 控制逻辑，应按上表从物理链路 → IPv4 → 路由 → Ping → TCP 8080 逐层检查
+
+如果机械臂有线 IP 已被修改，则 README 中的 `192.168.1.18` 不再适用；应先通过示教器或已有连接确认控制器当前实际 IP，再同步修改 Teleop 配置
+
+睿尔曼官方网络配置参考：<https://develop.realman-robotics.com/en/robot/teachingPendant/setting/>
 
 ## Quick Start
 
