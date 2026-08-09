@@ -86,6 +86,12 @@ RM65-B
 | 示范数据记录 | Planned |
 | 主臂重力补偿 | Planned |
 
+## SerialArm-Core 基线
+
+- Upstream: https://github.com/Kaede-Rei/SerialArm-Core
+- Base: `v0.2.0`
+- `src/SerialArm-Core` 由本仓库直接追踪，用于 HX-10HM Hardware Backend 的项目内二次开发，不是 Git submodule
+
 ## 仓库结构
 
 ```text
