@@ -120,10 +120,19 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::configure(const std::string& con
             auto max_effort = require_as<double>(item, "max_effort");
             auto max_kp = require_as<double>(item, "max_kp");
             auto max_kd = require_as<double>(item, "max_kd");
+            auto positive_gain = require_as<double>(item, "positive_gain");
+            auto negative_gain = require_as<double>(item, "negative_gain");
+            auto positive_offset = require_as<double>(item, "positive_offset");
+            auto negative_offset = require_as<double>(item, "negative_offset");
+            auto torque_deadband_nm = require_as<double>(item, "torque_deadband_nm");
+            auto pwm_limit = require_as<int>(item, "pwm_limit");
             if(!name || !joint_name || !servo_id || !raw_zero || !direction ||
                 !min_pos || !max_pos || !max_vel || !max_effort || !max_kp || !max_kd ||
+                !positive_gain || !negative_gain || !positive_offset || !negative_offset ||
+                !torque_deadband_nm || !pwm_limit ||
                 *servo_id < 0 || *servo_id >= protocol::hiwonder_bus_servo::BROADCAST_ID ||
-                *raw_zero < 0 || *raw_zero > HX10HM_MAX_POSITION_RAW) {
+                *raw_zero < 0 || *raw_zero > HX10HM_MAX_POSITION_RAW ||
+                *pwm_limit <= 0 || *pwm_limit > 1000) {
                 return tl::make_unexpected(MotorBusErr::INVALID_CFG);
             }
 
@@ -139,6 +148,12 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::configure(const std::string& con
             actuator.max_effort = *max_effort;
             actuator.max_kp = *max_kp;
             actuator.max_kd = *max_kd;
+            actuator.positive_gain = *positive_gain;
+            actuator.negative_gain = *negative_gain;
+            actuator.positive_offset = *positive_offset;
+            actuator.negative_offset = *negative_offset;
+            actuator.torque_deadband_nm = *torque_deadband_nm;
+            actuator.pwm_limit = static_cast<std::int16_t>(*pwm_limit);
             cfg.actuators.push_back(std::move(actuator));
         }
         return configure(cfg);
@@ -348,13 +363,30 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::activate() {
 }
 
 /**
- * @brief 校验 MIT 命令并下发本阶段的安全零 PWM
+ * @brief 执行 Software MIT、Torque -> PWM 并同步下发六轴命令
  */
 tl::expected<void, MotorBusErr> Hx10hmMotorBus::write(const ActuatorCtrlCmd& cmd) {
     if(!active_) return tl::make_unexpected(MotorBusErr::NOT_ACTIVE);
-    const auto valid = validate_command(cmd);
-    if(!valid) return tl::make_unexpected(valid.error());
-    return write_zero_pwm();
+    if(!protocol_) return tl::make_unexpected(MotorBusErr::NOT_CONNECTED);
+
+    if(last_feedback_time_ == TimePoint{}) {
+        (void)write_zero_pwm();
+        return tl::make_unexpected(MotorBusErr::TIMEOUT);
+    }
+    const auto feedback_age = std::chrono::duration_cast<std::chrono::milliseconds>(
+        Clock::now() - last_feedback_time_);
+    const auto commands = build_pwm_commands(cmd, last_state_, feedback_age);
+    if(!commands) {
+        (void)write_zero_pwm();
+        return tl::make_unexpected(commands.error());
+    }
+
+    const auto written = protocol_->sync_write_pwm(*commands);
+    if(!written) {
+        (void)write_zero_pwm();
+        return tl::make_unexpected(map_write_error(written.error()));
+    }
+    return {};
 }
 
 /**
@@ -480,6 +512,110 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::validate_command(const ActuatorC
 }
 
 /**
+ * @brief 计算标量 Software MIT 力矩
+ */
+double Hx10hmMotorBus::calculate_mit_torque(
+    double tor_ff,
+    double kp,
+    double pos_desired,
+    double pos_measured,
+    double kd,
+    double vel_desired,
+    double vel_measured) noexcept {
+    return tor_ff + kp * (pos_desired - pos_measured) +
+        kd * (vel_desired - vel_measured);
+}
+
+/**
+ * @brief 将单轴力矩执行限幅、死区和分段线性 PWM 映射
+ */
+tl::expected<std::int16_t, MotorBusErr> Hx10hmMotorBus::torque_to_pwm(
+    std::size_t index,
+    double tau_cmd) const {
+    if(!configured_ || index >= cfg_.actuators.size() || !std::isfinite(tau_cmd)) {
+        return tl::make_unexpected(MotorBusErr::INVALID_CMD);
+    }
+
+    const auto& actuator = cfg_.actuators[index];
+    const double tau_limited = std::clamp(
+        tau_cmd,
+        -actuator.max_effort,
+        actuator.max_effort);
+    if(std::abs(tau_limited) <= actuator.torque_deadband_nm) return std::int16_t{ 0 };
+
+    const double pwm_unclamped = tau_limited > 0.0 ?
+        actuator.positive_gain * tau_limited + actuator.positive_offset :
+        actuator.negative_gain * tau_limited - actuator.negative_offset;
+    if(!std::isfinite(pwm_unclamped)) {
+        return tl::make_unexpected(MotorBusErr::INVALID_CMD);
+    }
+
+    const double limit = static_cast<double>(actuator.pwm_limit);
+    const double pwm_limited = std::clamp(pwm_unclamped, -limit, limit);
+    return static_cast<std::int16_t>(std::lround(pwm_limited));
+}
+
+/**
+ * @brief 使用指定状态和反馈年龄构造六轴 PWM 命令
+ */
+tl::expected<std::vector<protocol::hiwonder_bus_servo::PwmCommand>, MotorBusErr>
+Hx10hmMotorBus::build_pwm_commands(
+    const ActuatorCtrlCmd& cmd,
+    const ActuatorState& state,
+    std::chrono::milliseconds feedback_age) const {
+    const auto valid = validate_command(cmd);
+    if(!valid) return tl::make_unexpected(valid.error());
+    if(feedback_age.count() < 0 || feedback_age > cfg_.feedback_timeout) {
+        return tl::make_unexpected(MotorBusErr::TIMEOUT);
+    }
+
+    const std::size_t n = cfg_.actuators.size();
+    if(state.pos.size() != n || state.vel.size() != n || state.tor.size() != n ||
+        state.online.size() != n || state.enabled.size() != n || state.err_code.size() != n ||
+        !finite_vector(state.pos) || !finite_vector(state.vel) || !finite_vector(state.tor)) {
+        return tl::make_unexpected(MotorBusErr::INVALID_STATE);
+    }
+    if(std::any_of(state.online.begin(), state.online.end(), [](std::uint8_t value) {
+        return value == 0U;
+    })) {
+        return tl::make_unexpected(MotorBusErr::ACTUATOR_OFFLINE);
+    }
+    if(std::any_of(state.enabled.begin(), state.enabled.end(), [](std::uint8_t value) {
+        return value == 0U;
+    })) {
+        return tl::make_unexpected(MotorBusErr::NOT_ACTIVE);
+    }
+    if(std::any_of(state.err_code.begin(), state.err_code.end(), [](int value) {
+        return value != 0;
+    })) {
+        return tl::make_unexpected(MotorBusErr::ACTUATOR_FAULT);
+    }
+
+    std::vector<protocol::hiwonder_bus_servo::PwmCommand> commands;
+    commands.reserve(n);
+    for(std::size_t i = 0; i < n; ++i) {
+        const double tau_cmd = calculate_mit_torque(
+            cmd.tor[i],
+            cmd.kp[i],
+            cmd.pos[i],
+            state.pos[i],
+            cmd.kd[i],
+            cmd.vel[i],
+            state.vel[i]);
+        if(!std::isfinite(tau_cmd)) {
+            return tl::make_unexpected(MotorBusErr::INVALID_CMD);
+        }
+        const auto pwm = torque_to_pwm(i, tau_cmd);
+        if(!pwm) return tl::make_unexpected(pwm.error());
+        commands.push_back(protocol::hiwonder_bus_servo::PwmCommand{
+            cfg_.actuators[i].servo_id,
+            *pwm,
+        });
+    }
+    return commands;
+}
+
+/**
  * @brief 将 HX 原始位置转换为弧度
  */
 double Hx10hmMotorBus::raw_position_to_rad(
@@ -533,8 +669,18 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::validate_cfg(const HiwonderBusCf
             !std::isfinite(actuator.min_pos) || !std::isfinite(actuator.max_pos) ||
             !std::isfinite(actuator.max_vel) || !std::isfinite(actuator.max_effort) ||
             !std::isfinite(actuator.max_kp) || !std::isfinite(actuator.max_kd) ||
+            !std::isfinite(actuator.positive_gain) || !std::isfinite(actuator.negative_gain) ||
+            !std::isfinite(actuator.positive_offset) || !std::isfinite(actuator.negative_offset) ||
+            !std::isfinite(actuator.torque_deadband_nm) ||
             actuator.min_pos >= actuator.max_pos || actuator.max_vel <= 0.0 ||
             actuator.max_effort <= 0.0 || actuator.max_kp < 0.0 || actuator.max_kd < 0.0 ||
+            actuator.positive_gain <= 0.0 || actuator.negative_gain <= 0.0 ||
+            actuator.positive_offset < 0.0 || actuator.negative_offset < 0.0 ||
+            actuator.torque_deadband_nm < 0.0 ||
+            actuator.torque_deadband_nm > actuator.max_effort ||
+            actuator.pwm_limit <= 0 || actuator.pwm_limit > 1000 ||
+            !std::isfinite(actuator.positive_gain * actuator.max_effort + actuator.positive_offset) ||
+            !std::isfinite(actuator.negative_gain * -actuator.max_effort - actuator.negative_offset) ||
             actuator.min_pos < representable_min || actuator.max_pos > representable_max ||
             std::find(ids.begin(), ids.end(), actuator.servo_id) != ids.end()) {
             return tl::make_unexpected(MotorBusErr::INVALID_CFG);

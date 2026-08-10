@@ -37,6 +37,12 @@ struct HiwonderActuatorCfg {
     double max_effort{ 0.0 };      ///< 软件安全力矩上限，N·m
     double max_kp{ 0.0 };          ///< 软件 MIT 最大 kp，N·m/rad
     double max_kd{ 0.0 };          ///< 软件 MIT 最大 kd，N·m·s/rad
+    double positive_gain{ 0.0 };   ///< 正向力矩到 PWM 增益
+    double negative_gain{ 0.0 };   ///< 负向力矩到 PWM 增益
+    double positive_offset{ 0.0 }; ///< 正向 PWM 启动偏置
+    double negative_offset{ 0.0 }; ///< 负向 PWM 启动偏置
+    double torque_deadband_nm{ 0.0 }; ///< 力矩死区，N·m
+    std::int16_t pwm_limit{ 0 };   ///< 单轴 PWM 安全限幅，最大 1000
 };
 
 /**
@@ -100,7 +106,7 @@ public:
     tl::expected<void, MotorBusErr> activate() override;
 
     /**
-     * @brief 校验 MIT 命令并下发本阶段的安全零 PWM
+     * @brief 执行 Software MIT、Torque -> PWM 并同步下发六轴命令
      * @param cmd Core 输出的 MIT 五元组命令
      * @return 成功时返回空结果，否则返回错误码
      */
@@ -147,6 +153,49 @@ public:
      * @return 成功时返回空结果，否则返回 INVALID_CMD
      */
     tl::expected<void, MotorBusErr> validate_command(const ActuatorCtrlCmd& cmd) const;
+
+    /**
+     * @brief 计算标量 Software MIT 力矩
+     * @param tor_ff 前馈力矩，N·m
+     * @param kp 位置刚度，N·m/rad
+     * @param pos_desired 目标位置，rad
+     * @param pos_measured 实测位置，rad
+     * @param kd 速度阻尼，N·m·s/rad
+     * @param vel_desired 目标速度，rad/s
+     * @param vel_measured 实测速度，rad/s
+     * @return 未限幅的 MIT 力矩，N·m
+     */
+    static double calculate_mit_torque(
+        double tor_ff,
+        double kp,
+        double pos_desired,
+        double pos_measured,
+        double kd,
+        double vel_desired,
+        double vel_measured) noexcept;
+
+    /**
+     * @brief 将单轴力矩执行限幅、死区和分段线性 PWM 映射
+     * @param index 执行器索引
+     * @param tau_cmd 未限幅 MIT 力矩，N·m
+     * @return 成功时返回有符号 PWM，否则返回错误码
+     */
+    tl::expected<std::int16_t, MotorBusErr> torque_to_pwm(
+        std::size_t index,
+        double tau_cmd) const;
+
+    /**
+     * @brief 使用指定状态和反馈年龄构造六轴 PWM 命令
+     * @param cmd Core 输出的 MIT 命令
+     * @param state 用于 MIT 计算的执行器状态
+     * @param feedback_age 状态年龄
+     * @return 成功时返回按配置舵机顺序排列的 PWM 命令
+     */
+    tl::expected<std::vector<protocol::hiwonder_bus_servo::PwmCommand>, MotorBusErr>
+    build_pwm_commands(
+        const ActuatorCtrlCmd& cmd,
+        const ActuatorState& state,
+        std::chrono::milliseconds feedback_age) const;
 
     /**
      * @brief 将 HX 原始位置转换为弧度

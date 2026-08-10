@@ -13,6 +13,7 @@ find_package(ament_cmake QUIET)
 find_package(serial_arm_core CONFIG REQUIRED)
 find_package(serial_arm_protocol_hiwonder_bus_servo CONFIG REQUIRED)
 find_package(yaml-cpp REQUIRED)
+include(CTest)
 
 if(TARGET yaml-cpp::yaml-cpp)
     set(SERIAL_ARM_HIWONDER_YAML_CPP_TARGET yaml-cpp::yaml-cpp)
@@ -82,6 +83,32 @@ install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/serial_arm_hardware_hiwonderConfigVersion.cmake
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}
 )
+
+if(BUILD_TESTING)
+    find_package(GTest REQUIRED)
+
+    add_executable(serial_arm_hardware_hiwonder_tests
+        tests/hx10hm_motor_bus_tests.cpp
+    )
+    target_link_libraries(serial_arm_hardware_hiwonder_tests
+        PRIVATE
+            serial_arm_hardware_hiwonder
+            serial_arm::config
+            GTest::gtest_main
+    )
+    target_compile_features(serial_arm_hardware_hiwonder_tests PRIVATE cxx_std_17)
+    target_compile_options(serial_arm_hardware_hiwonder_tests
+        PRIVATE
+            $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
+    )
+    target_compile_definitions(serial_arm_hardware_hiwonder_tests
+        PRIVATE
+            SERIAL_ARM_HIWONDER_TEST_PLUGIN="$<TARGET_FILE:serial_arm_hardware_hiwonder>"
+            SERIAL_ARM_HIWONDER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+    )
+
+    add_test(NAME serial_arm_hardware_hiwonder_tests COMMAND serial_arm_hardware_hiwonder_tests)
+endif()
 
 if(ament_cmake_FOUND)
     ament_export_targets(serial_arm_hardware_hiwonder_targets HAS_LIBRARY_TARGET)
