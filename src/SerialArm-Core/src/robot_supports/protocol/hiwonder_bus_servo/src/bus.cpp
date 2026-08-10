@@ -23,7 +23,7 @@ constexpr std::uint16_t DIRECTION_BIT_10 = 0x0400;
 constexpr std::uint16_t MAGNITUDE_MASK_10 = 0x03FF;
 
 /**
- * @brief 检查单舅机 ID 是否合法
+ * @brief 检查单舵机 ID 是否合法
  */
 bool valid_servo_id(std::uint8_t id) noexcept {
     return id < BROADCAST_ID;
@@ -269,7 +269,7 @@ HiwonderBusServo::HiwonderBusServo(transport::SerialPort& serial) noexcept
     : serial_(serial) {}
 
 /**
- * @brief 读取单舅机连续寄存器
+ * @brief 读取单舵机连续寄存器
  */
 tl::expected<Buffer, Err> HiwonderBusServo::read_register(
     std::uint8_t id,
@@ -291,7 +291,7 @@ tl::expected<Buffer, Err> HiwonderBusServo::read_register(
 }
 
 /**
- * @brief 写入单舅机连续寄存器并消费状态 ACK
+ * @brief 写入单舵机连续寄存器并消费状态 ACK
  */
 tl::expected<void, Err> HiwonderBusServo::write_register(
     std::uint8_t id,
@@ -311,7 +311,7 @@ tl::expected<void, Err> HiwonderBusServo::write_register(
 }
 
 /**
- * @brief 同步读取多舅机连续寄存器
+ * @brief 同步读取多舵机连续寄存器
  */
 tl::expected<std::vector<StatusPacket>, Err> HiwonderBusServo::sync_read(
     const std::vector<std::uint8_t>& ids,
@@ -338,7 +338,7 @@ tl::expected<std::vector<StatusPacket>, Err> HiwonderBusServo::sync_read(
 }
 
 /**
- * @brief 同步写入多舅机连续寄存器
+ * @brief 同步写入多舵机连续寄存器
  */
 tl::expected<void, Err> HiwonderBusServo::sync_write(
     std::uint8_t address,
@@ -357,7 +357,7 @@ tl::expected<void, Err> HiwonderBusServo::sync_write(
 }
 
 /**
- * @brief 设置舅机运行模式
+ * @brief 设置舵机运行模式
  */
 tl::expected<void, Err> HiwonderBusServo::set_run_mode(
     std::uint8_t id,
@@ -371,7 +371,7 @@ tl::expected<void, Err> HiwonderBusServo::set_run_mode(
 }
 
 /**
- * @brief 设置舅机扭矩使能
+ * @brief 设置舵机扭矩使能
  */
 tl::expected<void, Err> HiwonderBusServo::set_torque_enable(
     std::uint8_t id,
@@ -381,7 +381,7 @@ tl::expected<void, Err> HiwonderBusServo::set_torque_enable(
 }
 
 /**
- * @brief 写入单舅机 PWM 开环命令
+ * @brief 写入单舵机 PWM 开环命令
  */
 tl::expected<void, Err> HiwonderBusServo::write_pwm(
     std::uint8_t id,
@@ -396,7 +396,7 @@ tl::expected<void, Err> HiwonderBusServo::write_pwm(
 }
 
 /**
- * @brief 使用一帧 SYNC WRITE 写入多舅机 PWM
+ * @brief 使用一帧 SYNC WRITE 写入多舵机 PWM
  */
 tl::expected<void, Err> HiwonderBusServo::sync_write_pwm(const std::vector<PwmCommand>& commands) {
     std::vector<SyncWriteEntry> entries;
@@ -446,7 +446,7 @@ tl::expected<std::int16_t, Err> HiwonderBusServo::read_load(
 }
 
 /**
- * @brief 读取舅机故障位图
+ * @brief 读取舵机故障位图
  */
 tl::expected<std::uint8_t, Err> HiwonderBusServo::read_fault(
     std::uint8_t id,
@@ -457,7 +457,7 @@ tl::expected<std::uint8_t, Err> HiwonderBusServo::read_fault(
 }
 
 /**
- * @brief 读取舅机原始电流
+ * @brief 读取舵机原始电流
  */
 tl::expected<std::uint16_t, Err> HiwonderBusServo::read_current(
     std::uint8_t id,
@@ -468,7 +468,7 @@ tl::expected<std::uint16_t, Err> HiwonderBusServo::read_current(
 }
 
 /**
- * @brief 使用两次 SYNC READ 读取多舅机原始状态与电流
+ * @brief 使用两次 SYNC READ 读取多舵机原始状态与电流
  */
 tl::expected<std::vector<RawState>, Err> HiwonderBusServo::sync_read_states(
     const std::vector<std::uint8_t>& ids,

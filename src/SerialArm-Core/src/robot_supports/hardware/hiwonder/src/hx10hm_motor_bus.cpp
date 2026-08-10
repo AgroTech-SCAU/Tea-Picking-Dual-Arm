@@ -537,15 +537,19 @@ tl::expected<std::int16_t, MotorBusErr> Hx10hmMotorBus::torque_to_pwm(
     }
 
     const auto& actuator = cfg_.actuators[index];
-    const double tau_limited = std::clamp(
+    const double tau_joint_limited = std::clamp(
         tau_cmd,
         -actuator.max_effort,
         actuator.max_effort);
-    if(std::abs(tau_limited) <= actuator.torque_deadband_nm) return std::int16_t{ 0 };
+    if(std::abs(tau_joint_limited) <= actuator.torque_deadband_nm) {
+        return std::int16_t{ 0 };
+    }
 
-    const double pwm_unclamped = tau_limited > 0.0 ?
-        actuator.positive_gain * tau_limited + actuator.positive_offset :
-        actuator.negative_gain * tau_limited - actuator.negative_offset;
+    const double tau_raw = static_cast<double>(actuator.direction) * tau_joint_limited;
+
+    const double pwm_unclamped = tau_raw > 0.0 ?
+        actuator.positive_gain * tau_raw + actuator.positive_offset :
+        actuator.negative_gain * tau_raw - actuator.negative_offset;
     if(!std::isfinite(pwm_unclamped)) {
         return tl::make_unexpected(MotorBusErr::INVALID_CMD);
     }
@@ -637,6 +641,14 @@ double Hx10hmMotorBus::raw_velocity_to_rad_per_second(
     return static_cast<double>(direction * signed_steps_per_second) * RAD_PER_STEP;
 }
 
+/**
+ * @brief 返回最近一次 read() 保存的 HX 原始诊断状态
+ */
+const std::vector<protocol::hiwonder_bus_servo::RawState>&
+Hx10hmMotorBus::raw_diagnostics() const noexcept {
+    return raw_states_;
+}
+
 // ! ========================= 私 有 类 方 法 实 现 ========================= ! //
 
 /**
@@ -652,6 +664,7 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::validate_cfg(const HiwonderBusCf
         return tl::make_unexpected(MotorBusErr::INVALID_CFG);
     }
 
+    constexpr double endpoint_epsilon = 1e-9;
     std::vector<std::uint8_t> ids;
     ids.reserve(cfg.actuators.size());
     for(const auto& actuator : cfg.actuators) {
@@ -681,7 +694,8 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::validate_cfg(const HiwonderBusCf
             actuator.pwm_limit <= 0 || actuator.pwm_limit > 1000 ||
             !std::isfinite(actuator.positive_gain * actuator.max_effort + actuator.positive_offset) ||
             !std::isfinite(actuator.negative_gain * -actuator.max_effort - actuator.negative_offset) ||
-            actuator.min_pos < representable_min || actuator.max_pos > representable_max ||
+            actuator.min_pos < representable_min - endpoint_epsilon ||
+            actuator.max_pos > representable_max + endpoint_epsilon ||
             std::find(ids.begin(), ids.end(), actuator.servo_id) != ids.end()) {
             return tl::make_unexpected(MotorBusErr::INVALID_CFG);
         }
@@ -691,7 +705,7 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::validate_cfg(const HiwonderBusCf
 }
 
 /**
- * @brief 获取按配置顺序排列的舅机 ID
+ * @brief 获取按配置顺序排列的舵机 ID
  */
 std::vector<std::uint8_t> Hx10hmMotorBus::servo_ids() const {
     std::vector<std::uint8_t> ids;

@@ -1,0 +1,143 @@
+# HX-10HM nominal actuator configuration.
+#
+# Sources and scope:
+# - Official-derived: rated voltage 11.1 V; stall torque 10 kgf·cm;
+#   no-load speed 0.10 s/60 deg; encoder range 0..4095 per revolution.
+# - Unit conversion: 1 kgf·cm = 9.80665 N * 0.01 m = 0.0980665 N·m,
+#   therefore 10 kgf·cm = 0.980665 N·m nominal stall torque.
+# - Encoder conversion: 4096 step/rev gives 2*pi/4096 =
+#   0.001533980788 rad/step. With raw_zero=2048, the representable range is
+#   [-pi, 2047*2*pi/4096] = [-3.141592654, 3.140058673] rad.
+# - No-load speed conversion: (pi/3 rad) / 0.10 s = 10.471976 rad/s.
+#
+# Engineering nominal approximation (not a measured torque constant):
+#   1000 PWM / 0.980665 N·m = 1019.716213 PWM/(N·m), defined in the
+#   HX raw motor coordinate at the 11.1 V nominal condition.
+#
+# Conservative software choices (not HX datasheet control gains):
+# - Official guidance suggests approximately 1/5..1/3 stall load for continuous
+#   operation; max_effort = 30% * 0.980665 = 0.2941995 N·m is the project choice
+#   within that range, not an official rated continuous torque.
+# - pwm_limit = 30% * 1000 = 300, consistent with the nominal mapping.
+# - max_kp=1.0 N·m/rad and max_kd=0.1 N·m·s/rad are temporary Software MIT
+#   capability limits, not recommended operating gains.
+# - offsets and deadband remain zero because breakaway and zero-region behavior
+#   have not been measured.
+#
+# This is not a tea_master Robot Support, measured Torque/PWM identification,
+# final mechanical joint-limit definition, or Gravity Compensation config.
+# direction=1 is an actuator-level bringup default and is unrelated to Tea's
+# master-to-RM65-B mapping_direction={1,1,-1,1,1,1}.
+hiwonder:
+  serial_port: /dev/ttyACM0
+  baudrate: 1000000
+  read_timeout_ms: 5
+  write_timeout_ms: 20
+  feedback_timeout_ms: 50
+  startup_read_cycles: 3
+  restore_position_mode_on_deactivate: false
+  velocity_encoding: bit15_sign_magnitude
+  torque_feedback_mode: unavailable_zero
+  actuators:
+    - name: hx10hm_1
+      joint_name: joint1
+      servo_id: 1
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.2941995
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 300
+    - name: hx10hm_2
+      joint_name: joint2
+      servo_id: 2
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.2941995
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 300
+    - name: hx10hm_3
+      joint_name: joint3
+      servo_id: 3
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.2941995
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 300
+    - name: hx10hm_4
+      joint_name: joint4
+      servo_id: 4
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.2941995
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 300
+    - name: hx10hm_5
+      joint_name: joint5
+      servo_id: 5
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.2941995
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 300
+    - name: hx10hm_6
+      joint_name: joint6
+      servo_id: 6
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.2941995
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 300

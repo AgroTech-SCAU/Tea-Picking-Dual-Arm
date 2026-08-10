@@ -35,7 +35,7 @@ enum class Err {
     TIMEOUT,              ///< 传输或应答超时
     MALFORMED_PACKET,     ///< 报文头或长度非法
     CHECKSUM_MISMATCH,    ///< 报文校验和不匹配
-    UNEXPECTED_ID,        ///< 应答舅机 ID 不匹配
+    UNEXPECTED_ID,        ///< 应答舵机 ID 不匹配
     DEVICE_ERROR,         ///< 应答包 ERROR 非零
 };
 
@@ -49,27 +49,27 @@ enum class RunMode : std::uint8_t {
 };
 
 /**
- * @brief 舅机状态应答包
+ * @brief 舵机状态应答包
  */
 struct StatusPacket {
-    std::uint8_t id{ 0 };          ///< 应答舅机 ID
+    std::uint8_t id{ 0 };          ///< 应答舵机 ID
     std::uint8_t error{ 0 };       ///< 协议 ERROR 字段
     Buffer parameters;            ///< 原始参数字节
 };
 
 /**
- * @brief SYNC WRITE 单舅机数据项
+ * @brief SYNC WRITE 单舵机数据项
  */
 struct SyncWriteEntry {
-    std::uint8_t id{ 0 };      ///< 舅机 ID
-    Buffer data;               ///< 该舅机的连续寄存器数据
+    std::uint8_t id{ 0 };      ///< 舵机 ID
+    Buffer data;               ///< 该舵机的连续寄存器数据
 };
 
 /**
- * @brief 单舅机 PWM 原始命令
+ * @brief 单舵机 PWM 原始命令
  */
 struct PwmCommand {
-    std::uint8_t id{ 0 };      ///< 舅机 ID
+    std::uint8_t id{ 0 };      ///< 舵机 ID
     std::int16_t pwm{ 0 };     ///< 有符号 PWM 命令，范围 [-1000, 1000]
 };
 
@@ -77,14 +77,14 @@ struct PwmCommand {
  * @brief HX-10HM 原始反馈状态
  */
 struct RawState {
-    std::uint8_t id{ 0 };                  ///< 舅机 ID
+    std::uint8_t id{ 0 };                  ///< 舵机 ID
     std::uint16_t position_raw{ 0 };       ///< 0x38 原始位置步数
     std::uint16_t velocity_raw{ 0 };       ///< 0x3A 原始速度字，方向编码未解释
     std::int16_t load_raw{ 0 };            ///< 0x3C 原始负载，0.1% 且 BIT10 为方向位
     std::uint8_t voltage_raw{ 0 };         ///< 0x3E 原始电压，0.1 V
     std::uint8_t temperature_raw{ 0 };     ///< 0x3F 原始温度，摄氏度
     std::uint8_t registered{ 0 };          ///< 0x40 异步写标志
-    std::uint8_t fault{ 0 };               ///< 0x41 舅机故障位图
+    std::uint8_t fault{ 0 };               ///< 0x41 舵机故障位图
     std::uint16_t current_raw_ma{ 0 };     ///< 0x45 原始电流，1 mA
 };
 
@@ -99,7 +99,7 @@ std::uint8_t checksum(const Buffer& packet_without_checksum) noexcept;
 
 /**
  * @brief 构造 READ DATA 指令包
- * @param id 舅机 ID
+ * @param id 舵机 ID
  * @param address 起始寄存器地址
  * @param length 读取字节数
  * @return 成功时返回报文，否则返回错误码
@@ -111,7 +111,7 @@ tl::expected<Buffer, Err> encode_read_packet(
 
 /**
  * @brief 构造 WRITE DATA 指令包
- * @param id 舅机 ID
+ * @param id 舵机 ID
  * @param address 起始寄存器地址
  * @param data 连续写入数据
  * @return 成功时返回报文，否则返回错误码
@@ -123,9 +123,9 @@ tl::expected<Buffer, Err> encode_write_packet(
 
 /**
  * @brief 构造 SYNC READ 指令包
- * @param ids 应答顺序中的舅机 ID
+ * @param ids 应答顺序中的舵机 ID
  * @param address 起始寄存器地址
- * @param length 每个舅机读取字节数
+ * @param length 每个舵机读取字节数
  * @return 成功时返回报文，否则返回错误码
  */
 tl::expected<Buffer, Err> encode_sync_read_packet(
@@ -136,8 +136,8 @@ tl::expected<Buffer, Err> encode_sync_read_packet(
 /**
  * @brief 构造 SYNC WRITE 指令包
  * @param address 起始寄存器地址
- * @param data_length 每个舅机写入字节数
- * @param entries 舅机 ID 与数据列表
+ * @param data_length 每个舵机写入字节数
+ * @param entries 舵机 ID 与数据列表
  * @return 成功时返回报文，否则返回错误码
  */
 tl::expected<Buffer, Err> encode_sync_write_packet(
@@ -174,8 +174,8 @@ public:
     explicit HiwonderBusServo(transport::SerialPort& serial) noexcept;
 
     /**
-     * @brief 读取单舅机连续寄存器
-     * @param id 舅机 ID
+     * @brief 读取单舵机连续寄存器
+     * @param id 舵机 ID
      * @param address 起始地址
      * @param length 读取长度
      * @param timeout 应答超时
@@ -188,8 +188,8 @@ public:
         std::chrono::milliseconds timeout);
 
     /**
-     * @brief 写入单舅机连续寄存器并消费状态 ACK
-     * @param id 舅机 ID
+     * @brief 写入单舵机连续寄存器并消费状态 ACK
+     * @param id 舵机 ID
      * @param address 起始地址
      * @param data 写入数据
      * @param timeout ACK 超时
@@ -202,10 +202,10 @@ public:
         std::chrono::milliseconds timeout);
 
     /**
-     * @brief 同步读取多舅机连续寄存器
-     * @param ids 舅机 ID 与应答顺序
+     * @brief 同步读取多舵机连续寄存器
+     * @param ids 舵机 ID 与应答顺序
      * @param address 起始地址
-     * @param length 每个舅机读取长度
+     * @param length 每个舵机读取长度
      * @param timeout 每个应答包超时
      * @return 成功时返回按 ids 排列的状态包，否则返回错误码
      */
@@ -216,10 +216,10 @@ public:
         std::chrono::milliseconds timeout);
 
     /**
-     * @brief 同步写入多舅机连续寄存器
+     * @brief 同步写入多舵机连续寄存器
      * @param address 起始地址
-     * @param data_length 每个舅机写入长度
-     * @param entries 舅机 ID 与写入数据
+     * @param data_length 每个舵机写入长度
+     * @param entries 舵机 ID 与写入数据
      * @return 成功时返回空结果，否则返回错误码
      */
     tl::expected<void, Err> sync_write(
@@ -228,8 +228,8 @@ public:
         const std::vector<SyncWriteEntry>& entries);
 
     /**
-     * @brief 设置舅机运行模式
-     * @param id 舅机 ID
+     * @brief 设置舵机运行模式
+     * @param id 舵机 ID
      * @param mode 运行模式
      * @param timeout ACK 超时
      * @return 成功时返回空结果，否则返回错误码
@@ -240,8 +240,8 @@ public:
         std::chrono::milliseconds timeout);
 
     /**
-     * @brief 设置舅机扭矩使能
-     * @param id 舅机 ID
+     * @brief 设置舵机扭矩使能
+     * @param id 舵机 ID
      * @param enable true 为上力，false 为卸力
      * @param timeout ACK 超时
      * @return 成功时返回空结果，否则返回错误码
@@ -252,8 +252,8 @@ public:
         std::chrono::milliseconds timeout);
 
     /**
-     * @brief 写入单舅机 PWM 开环命令
-     * @param id 舅机 ID
+     * @brief 写入单舵机 PWM 开环命令
+     * @param id 舵机 ID
      * @param pwm 有符号 PWM 命令，范围 [-1000, 1000]
      * @param timeout ACK 超时
      * @return 成功时返回空结果，否则返回错误码
@@ -264,15 +264,15 @@ public:
         std::chrono::milliseconds timeout);
 
     /**
-     * @brief 使用一帧 SYNC WRITE 写入多舅机 PWM
-     * @param commands 舅机 ID 与有符号 PWM 命令
+     * @brief 使用一帧 SYNC WRITE 写入多舵机 PWM
+     * @param commands 舵机 ID 与有符号 PWM 命令
      * @return 成功时返回空结果，否则返回错误码
      */
     tl::expected<void, Err> sync_write_pwm(const std::vector<PwmCommand>& commands);
 
     /**
      * @brief 读取原始位置
-     * @param id 舅机 ID
+     * @param id 舵机 ID
      * @param timeout 应答超时
      * @return 0x38 的原始 16 位值
      */
@@ -282,7 +282,7 @@ public:
 
     /**
      * @brief 读取原始速度字
-     * @param id 舅机 ID
+     * @param id 舵机 ID
      * @param timeout 应答超时
      * @return 0x3A 的原始 16 位值
      */
@@ -292,7 +292,7 @@ public:
 
     /**
      * @brief 读取有符号原始负载
-     * @param id 舅机 ID
+     * @param id 舵机 ID
      * @param timeout 应答超时
      * @return 0x3C 按 BIT10 方向位解码的负载值
      */
@@ -301,8 +301,8 @@ public:
         std::chrono::milliseconds timeout);
 
     /**
-     * @brief 读取舅机故障位图
-     * @param id 舅机 ID
+     * @brief 读取舵机故障位图
+     * @param id 舵机 ID
      * @param timeout 应答超时
      * @return 0x41 的原始故障字节
      */
@@ -311,8 +311,8 @@ public:
         std::chrono::milliseconds timeout);
 
     /**
-     * @brief 读取舅机原始电流
-     * @param id 舅机 ID
+     * @brief 读取舵机原始电流
+     * @param id 舵机 ID
      * @param timeout 应答超时
      * @return 0x45 的原始电流，单位 1 mA
      */
@@ -321,8 +321,8 @@ public:
         std::chrono::milliseconds timeout);
 
     /**
-     * @brief 使用两次 SYNC READ 读取多舅机原始状态与电流
-     * @param ids 舅机 ID 顺序
+     * @brief 使用两次 SYNC READ 读取多舵机原始状态与电流
+     * @param ids 舵机 ID 顺序
      * @param timeout 每个应答包超时
      * @return 成功时返回按 ids 排列的原始状态
      */

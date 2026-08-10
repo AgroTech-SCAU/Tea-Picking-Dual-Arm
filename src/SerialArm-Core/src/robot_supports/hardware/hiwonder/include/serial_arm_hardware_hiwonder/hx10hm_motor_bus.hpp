@@ -28,7 +28,7 @@ enum class HiwonderVelocityEncoding {
 struct HiwonderActuatorCfg {
     std::string name;              ///< 执行器名称
     std::string joint_name;        ///< 关联关节名称
-    std::uint8_t servo_id{ 0 };    ///< 舅机 ID
+    std::uint8_t servo_id{ 0 };    ///< 舵机 ID
     std::uint16_t raw_zero{ 2048 }; ///< 关节零位对应的原始位置
     int direction{ 1 };            ///< 机械关节方向，只允许 +1 或 -1
     double min_pos{ 0.0 };         ///< 最小位置，rad
@@ -219,6 +219,13 @@ public:
         std::uint16_t raw,
         int direction) noexcept;
 
+    /**
+     * @brief 返回最近一次 read() 保存的 HX 原始诊断状态
+     * @return 按配置舵机顺序排列的只读原始状态
+     */
+    const std::vector<protocol::hiwonder_bus_servo::RawState>&
+    raw_diagnostics() const noexcept;
+
 private:
     /**
      * @brief 验证 Backend 配置
@@ -228,8 +235,8 @@ private:
     tl::expected<void, MotorBusErr> validate_cfg(const HiwonderBusCfg& cfg) const;
 
     /**
-     * @brief 获取按配置顺序排列的舅机 ID
-     * @return 舅机 ID 列表
+     * @brief 获取按配置顺序排列的舵机 ID
+     * @return 舵机 ID 列表
      */
     std::vector<std::uint8_t> servo_ids() const;
 
@@ -248,7 +255,7 @@ private:
 
     /**
      * @brief 仅在当前值不同时写入 NVS 运行模式
-     * @param id 舅机 ID
+     * @param id 舵机 ID
      * @param mode 目标模式
      * @return 成功时返回空结果，否则返回错误码
      */

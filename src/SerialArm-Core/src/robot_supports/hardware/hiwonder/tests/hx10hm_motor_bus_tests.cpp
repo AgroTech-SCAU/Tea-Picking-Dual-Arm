@@ -3,6 +3,7 @@
 #include "serial_arm/hardware/hardware_loader.hpp"
 
 #include <gtest/gtest.h>
+#include <yaml-cpp/yaml.h>
 
 #include <cmath>
 #include <limits>
@@ -96,6 +97,57 @@ TEST(Hx10hmMotorBusConfigTests, LoadsExplicitBackendMappingTestFixture) {
     ASSERT_EQ(bus.capabilities().size(), 6U);
     EXPECT_EQ(bus.capabilities()[0].actuator_name, "test_motor_1");
     EXPECT_DOUBLE_EQ(bus.capabilities()[0].max_effort, 2.0);
+}
+
+TEST(Hx10hmMotorBusConfigTests, LoadsOfficialDerivedNominalConfiguration) {
+    serial_arm::Hx10hmMotorBus bus;
+    const auto configured = bus.configure(SERIAL_ARM_HIWONDER_NOMINAL_CONFIG);
+    ASSERT_TRUE(configured);
+    ASSERT_EQ(bus.capabilities().size(), 6U);
+    for(const auto& capability : bus.capabilities()) {
+        EXPECT_NEAR(capability.min_pos, -3.141592654, 1e-12);
+        EXPECT_NEAR(capability.max_pos, 3.140058673, 1e-12);
+        EXPECT_NEAR(capability.max_vel, 10.471976, 1e-12);
+        EXPECT_NEAR(capability.max_effort, 0.2941995, 1e-12);
+        EXPECT_NEAR(capability.max_kp, 1.0, 1e-12);
+        EXPECT_NEAR(capability.max_kd, 0.1, 1e-12);
+    }
+    const auto full_nominal = bus.torque_to_pwm(0U, 0.2941995);
+    ASSERT_TRUE(full_nominal);
+    EXPECT_EQ(*full_nominal, 300);
+
+    const YAML::Node actuators = YAML::LoadFile(
+        SERIAL_ARM_HIWONDER_NOMINAL_CONFIG)["hiwonder"]["actuators"];
+    ASSERT_TRUE(actuators.IsSequence());
+    ASSERT_EQ(actuators.size(), 6U);
+    for(std::size_t i = 0; i < actuators.size(); ++i) {
+        EXPECT_EQ(actuators[i]["servo_id"].as<int>(), static_cast<int>(i + 1U));
+        EXPECT_EQ(actuators[i]["raw_zero"].as<int>(), 2048);
+        EXPECT_EQ(actuators[i]["direction"].as<int>(), 1);
+        EXPECT_DOUBLE_EQ(actuators[i]["positive_gain"].as<double>(), 1019.716213);
+        EXPECT_DOUBLE_EQ(actuators[i]["negative_gain"].as<double>(), 1019.716213);
+        EXPECT_DOUBLE_EQ(actuators[i]["positive_offset"].as<double>(), 0.0);
+        EXPECT_DOUBLE_EQ(actuators[i]["negative_offset"].as<double>(), 0.0);
+        EXPECT_DOUBLE_EQ(actuators[i]["torque_deadband_nm"].as<double>(), 0.0);
+        EXPECT_EQ(actuators[i]["pwm_limit"].as<int>(), 300);
+    }
+}
+
+TEST(Hx10hmMotorBusMappingTests, ProducesExpectedNominalSmallTorquePwm) {
+    serial_arm::Hx10hmMotorBus bus;
+    ASSERT_TRUE(bus.configure(SERIAL_ARM_HIWONDER_NOMINAL_CONFIG));
+    const auto pwm_002 = bus.torque_to_pwm(0U, 0.02);
+    const auto pwm_005 = bus.torque_to_pwm(0U, 0.05);
+    const auto pwm_010 = bus.torque_to_pwm(0U, 0.10);
+    const auto pwm_negative = bus.torque_to_pwm(0U, -0.10);
+    ASSERT_TRUE(pwm_002);
+    ASSERT_TRUE(pwm_005);
+    ASSERT_TRUE(pwm_010);
+    ASSERT_TRUE(pwm_negative);
+    EXPECT_EQ(*pwm_002, 20);
+    EXPECT_EQ(*pwm_005, 51);
+    EXPECT_EQ(*pwm_010, 102);
+    EXPECT_EQ(*pwm_negative, -102);
 }
 
 TEST(Hx10hmMotorBusConfigTests, RejectsInvalidActuatorCount) {
@@ -198,6 +250,48 @@ TEST(Hx10hmMotorBusMappingTests, MapsPositiveAndNegativeTorque) {
     ASSERT_TRUE(negative);
     EXPECT_EQ(*positive, 60);
     EXPECT_EQ(*negative, -80);
+}
+
+TEST(Hx10hmMotorBusMappingTests, AppliesDirectionToRawMotorTorqueMapping) {
+    auto cfg = valid_cfg();
+    cfg.actuators[0].direction = 1;
+    cfg.actuators[1].direction = -1;
+    serial_arm::Hx10hmMotorBus bus;
+    ASSERT_TRUE(bus.configure(cfg));
+
+    const auto direction_positive_tau_positive = bus.torque_to_pwm(0U, 0.1);
+    const auto direction_positive_tau_negative = bus.torque_to_pwm(0U, -0.1);
+    const auto direction_negative_tau_positive = bus.torque_to_pwm(1U, 0.1);
+    const auto direction_negative_tau_negative = bus.torque_to_pwm(1U, -0.1);
+    ASSERT_TRUE(direction_positive_tau_positive);
+    ASSERT_TRUE(direction_positive_tau_negative);
+    ASSERT_TRUE(direction_negative_tau_positive);
+    ASSERT_TRUE(direction_negative_tau_negative);
+    EXPECT_EQ(*direction_positive_tau_positive, 20);
+    EXPECT_EQ(*direction_positive_tau_negative, -32);
+    EXPECT_EQ(*direction_negative_tau_positive, -33);
+    EXPECT_EQ(*direction_negative_tau_negative, 21);
+}
+
+TEST(Hx10hmMotorBusMappingTests, AppliesDirectionNegativeDeadbandAndSaturation) {
+    auto cfg = valid_cfg();
+    cfg.actuators[1].direction = -1;
+    cfg.actuators[1].negative_gain = 400.0;
+    serial_arm::Hx10hmMotorBus bus;
+    ASSERT_TRUE(bus.configure(cfg));
+
+    const auto deadband_positive = bus.torque_to_pwm(1U, 0.05);
+    const auto deadband_negative = bus.torque_to_pwm(1U, -0.05);
+    const auto pwm_saturated = bus.torque_to_pwm(1U, 2.0);
+    const auto effort_saturated = bus.torque_to_pwm(1U, 20.0);
+    ASSERT_TRUE(deadband_positive);
+    ASSERT_TRUE(deadband_negative);
+    ASSERT_TRUE(pwm_saturated);
+    ASSERT_TRUE(effort_saturated);
+    EXPECT_EQ(*deadband_positive, 0);
+    EXPECT_EQ(*deadband_negative, 0);
+    EXPECT_EQ(*pwm_saturated, -500);
+    EXPECT_EQ(*effort_saturated, *pwm_saturated);
 }
 
 TEST(Hx10hmMotorBusMappingTests, AppliesDeadbandBeforeOffsets) {

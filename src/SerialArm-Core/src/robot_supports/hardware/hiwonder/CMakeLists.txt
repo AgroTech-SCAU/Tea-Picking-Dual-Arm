@@ -46,7 +46,21 @@ target_compile_options(serial_arm_hardware_hiwonder
         $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
 )
 
-install(TARGETS serial_arm_hardware_hiwonder
+add_executable(serial_arm_hiwonder_calibration
+    app/serial_arm_hiwonder_calibration.cpp
+)
+target_link_libraries(serial_arm_hiwonder_calibration
+    PRIVATE
+        serial_arm_hardware_hiwonder
+)
+target_compile_options(serial_arm_hiwonder_calibration
+    PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
+)
+
+install(TARGETS
+    serial_arm_hardware_hiwonder
+    serial_arm_hiwonder_calibration
     EXPORT serial_arm_hardware_hiwonder_targets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -57,7 +71,15 @@ install(DIRECTORY include/
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
+install(DIRECTORY config/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/config
+)
+
 install(FILES package.xml
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}
+)
+
+install(FILES README.md
     DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}
 )
 
@@ -105,9 +127,23 @@ if(BUILD_TESTING)
         PRIVATE
             SERIAL_ARM_HIWONDER_TEST_PLUGIN="$<TARGET_FILE:serial_arm_hardware_hiwonder>"
             SERIAL_ARM_HIWONDER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+            SERIAL_ARM_HIWONDER_NOMINAL_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/hx10hm_nominal.yaml"
     )
 
     add_test(NAME serial_arm_hardware_hiwonder_tests COMMAND serial_arm_hardware_hiwonder_tests)
+    add_test(NAME serial_arm_hiwonder_calibration_help
+        COMMAND serial_arm_hiwonder_calibration --help
+    )
+    add_test(NAME serial_arm_hiwonder_calibration_requires_confirmation
+        COMMAND serial_arm_hiwonder_calibration
+            --config ${CMAKE_CURRENT_SOURCE_DIR}/config/hx10hm_nominal.yaml
+            --mode tau
+            --joint 2
+            --tau 0.02
+    )
+    set_tests_properties(serial_arm_hiwonder_calibration_requires_confirmation
+        PROPERTIES WILL_FAIL TRUE
+    )
 endif()
 
 if(ament_cmake_FOUND)
