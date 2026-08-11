@@ -11,24 +11,14 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(serial_arm_core CONFIG REQUIRED)
+find_package(serial_arm_hardware_hiwonder CONFIG REQUIRED)
+find_package(tea_leader_description CONFIG REQUIRED)
+find_package(Threads REQUIRED)
+include(CTest)
 
-# tea_teleop 位于 src/bringup/tea_teleop
-# ../../ 回到 src
 set(TEA_SRC_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 
-# 通用串口层
-add_subdirectory(
-    ${TEA_SRC_ROOT}/hardware/hiwonder/serial_port
-    ${CMAKE_CURRENT_BINARY_DIR}/serial_port
-)
-
-# HX-10HM 驱动
-add_subdirectory(
-    ${TEA_SRC_ROOT}/hardware/hiwonder/hiwonder_driver
-    ${CMAKE_CURRENT_BINARY_DIR}/hiwonder_driver
-)
-
-# RM65-B 原生 SDK 封装
 add_subdirectory(
     ${TEA_SRC_ROOT}/hardware/rm65b/rm_bringup
     ${CMAKE_CURRENT_BINARY_DIR}/rm_bringup
@@ -37,6 +27,7 @@ add_subdirectory(
 add_executable(
     teleop
     src/teleop.cpp
+    src/leader_runtime.cpp
 )
 
 target_include_directories(
@@ -48,8 +39,11 @@ target_include_directories(
 target_link_libraries(
     teleop
     PRIVATE
-        hiwonder_driver
         rm_bringup
+        serial_arm::robot
+        serial_arm::config
+        serial_arm::dynamics
+        Threads::Threads
 )
 
 target_compile_features(teleop PRIVATE cxx_std_17)
@@ -75,10 +69,17 @@ install(
     DESTINATION lib/${PROJECT_NAME}
 )
 
-install(
-    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../../../docs/
-    DESTINATION share/${PROJECT_NAME}/docs
-    OPTIONAL
-)
+if(BUILD_TESTING)
+    add_test(
+        NAME tea_teleop_leader_config
+        COMMAND teleop --check-leader
+    )
+    set_tests_properties(
+        tea_teleop_leader_config
+        PROPERTIES
+            ENVIRONMENT
+                "SERIAL_ARM_RESOURCE_PATH=${TEA_SRC_ROOT}/SerialArm-Core/src/robot_supports/profiles/config/robot_profiles.yaml:${TEA_SRC_ROOT}/SerialArm-Core/src/robot_supports/robots/tea_leader/description:${CMAKE_BINARY_DIR}/../serial_arm_hardware_hiwonder"
+    )
+endif()
 
 ament_package()

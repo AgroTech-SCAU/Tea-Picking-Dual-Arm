@@ -2,25 +2,36 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <exception>
 #include <cmath>
 #include <csignal>
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
 
-#include "hiwonder_driver/hx10hm.hpp"
-#include "serial_port/serial_port.hpp"
+#include "serial_arm/core/types.hpp"
+#include "tea_teleop/leader_runtime.hpp"
 
 namespace {
 
 constexpr std::size_t kJointCount = 6;
 constexpr float kFullAlignToleranceDegree = 2.0F;
+constexpr double kRadToDegree = 57.2957795130823208768;
+constexpr double kHomeStaticAssistNm = 0.04;
+constexpr float kAlignMaxStepDegree = 0.25F;
+constexpr float kAlignSettleToleranceDegree = 0.5F;
+constexpr auto kAlignTimeout = std::chrono::seconds{ 8 };
+constexpr auto kTeleopPeriod = std::chrono::milliseconds{ 20 };
 
 volatile std::sig_atomic_t g_interrupt_requested = 0;
 
@@ -42,7 +53,7 @@ std::string prompt_line(const std::string& prompt) {
 
     std::string line;
     if(!std::getline(std::cin, line)) {
-        throw std::runtime_error("stdin 已关闭");
+        throw std::runtime_error("标准输入已关闭");
     }
     return line;
 }
@@ -50,17 +61,13 @@ std::string prompt_line(const std::string& prompt) {
 int prompt_int(const std::string& prompt) {
     for(;;) {
         const std::string text = prompt_line(prompt);
-
         try {
             std::size_t parsed = 0;
             const int value = std::stoi(text, &parsed);
-            if(parsed == text.size()) {
-                return value;
-            }
+            if(parsed == text.size()) return value;
         }
         catch(const std::exception&) {
         }
-
         std::cout << "输入无效，请重新输入\n";
     }
 }
@@ -68,79 +75,26 @@ int prompt_int(const std::string& prompt) {
 float prompt_float(const std::string& prompt) {
     for(;;) {
         const std::string text = prompt_line(prompt);
-
         try {
             std::size_t parsed = 0;
             const float value = std::stof(text, &parsed);
-            if(parsed == text.size()) {
-                return value;
-            }
+            if(parsed == text.size()) return value;
         }
         catch(const std::exception&) {
         }
-
         std::cout << "输入无效，请重新输入\n";
     }
-}
-
-bool confirm_token(const std::string& expected, const std::string& prompt) {
-    return prompt_line(prompt) == expected;
-}
-
-bool prompt_yes_no(const std::string& prompt) {
-    const std::string answer = prompt_line(prompt);
-    return answer == "y" || answer == "Y" || answer == "yes" || answer == "YES";
-}
-
-SerialPort::Config make_serial_config() {
-    SerialPort::Config config;
-    config.baud_rate = Hx10hm::BAUDRATE;
-    config.data_bits = 8;
-    config.parity = SerialPort::Parity::None;
-    config.stop_bits = SerialPort::StopBits::One;
-    config.flow_control = SerialPort::FlowControl::None;
-    config.read_timeout = std::chrono::milliseconds{ 10 };
-    config.write_timeout = std::chrono::milliseconds{ 20 };
-    config.flush_on_open = true;
-    return config;
 }
 
 void print_degree_array(
     const std::string& name,
     const std::array<float, kJointCount>& value) {
-    std::cout << name << "\n";
-
+    std::cout << name << "  ";
     for(std::size_t i = 0; i < value.size(); ++i) {
-        std::cout
-            << "  J" << (i + 1)
-            << " = " << std::fixed << std::setprecision(2)
-            << value[i] << " deg\n";
-    }
-}
-
-void print_leader_line(
-    const std::array<std::uint16_t, kJointCount>& raw,
-    const std::array<float, kJointCount>& degree) {
-    std::cout << "主臂    ";
-
-    for(std::size_t i = 0; i < kJointCount; ++i) {
-        std::cout
-            << "J" << (i + 1)
-            << "[" << raw[i]
-            << "," << std::fixed << std::setprecision(1)
-            << degree[i] << "deg] ";
-    }
-    std::cout << "\n";
-}
-
-void print_slave_line(const std::array<float, kJointCount>& degree) {
-    std::cout << "从臂    ";
-
-    for(std::size_t i = 0; i < kJointCount; ++i) {
         std::cout
             << "J" << (i + 1)
             << "[" << std::fixed << std::setprecision(1)
-            << degree[i] << "deg] ";
+            << value[i] << "deg] ";
     }
     std::cout << "\n";
 }
@@ -148,26 +102,11 @@ void print_slave_line(const std::array<float, kJointCount>& degree) {
 void print_difference_line(
     const std::array<float, kJointCount>& leader,
     const std::array<float, kJointCount>& slave) {
-    std::cout << "差值    ";
-
+    std::array<float, kJointCount> difference{};
     for(std::size_t i = 0; i < kJointCount; ++i) {
-        std::cout
-            << "J" << (i + 1)
-            << "[" << std::fixed << std::setprecision(1)
-            << (leader[i] - slave[i]) << "deg] ";
+        difference[i] = leader[i] - slave[i];
     }
-    std::cout << "\n";
-}
-
-bool all_leader_near_zero(
-    const std::array<std::uint16_t, kJointCount>& raw,
-    float tolerance_degree) {
-    for(const auto value : raw) {
-        if(std::abs(static_cast<float>(Hx10hm::raw_to_degree(value))) > tolerance_degree) {
-            return false;
-        }
-    }
-    return true;
+    print_degree_array("差值", difference);
 }
 
 float max_abs_difference(
@@ -180,7 +119,127 @@ float max_abs_difference(
     return result;
 }
 
-}  // namespace
+/**
+ * @brief 主臂后台控制循环
+ *
+ * SerialArm 保持独立 100 Hz 控制周期，RM65-B 的网络调用即使偶发阻塞
+ * 也不会让主臂状态超时
+ */
+class LeaderCycleWorker final {
+public:
+    explicit LeaderCycleWorker(tea_teleop::LeaderRuntime& leader)
+        : leader_(leader) {}
+
+    ~LeaderCycleWorker() {
+        stop();
+    }
+
+    LeaderCycleWorker(const LeaderCycleWorker&) = delete;
+    LeaderCycleWorker& operator=(const LeaderCycleWorker&) = delete;
+
+    void start() {
+        if(worker_.joinable()) throw std::logic_error("主臂后台控制已经启动");
+
+        const double frequency_hz = leader_.control_frequency_hz();
+        if(!std::isfinite(frequency_hz) || frequency_hz <= 0.0) {
+            throw std::runtime_error("主臂控制频率无效");
+        }
+
+        period_ = std::chrono::duration_cast<Clock::duration>(
+            std::chrono::duration<double>(1.0 / frequency_hz));
+        stop_requested_.store(false);
+        worker_ = std::thread([this]() { run(); });
+    }
+
+    void stop() noexcept {
+        stop_requested_.store(true);
+        if(worker_.joinable()) worker_.join();
+    }
+
+    serial_arm::RobotCycleOutput latest() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if(fault_) std::rethrow_exception(fault_);
+        if(!latest_) throw std::runtime_error("主臂后台控制尚未产生有效状态");
+        return *latest_;
+    }
+
+    void wait_until_ready(std::chrono::milliseconds timeout) const {
+        const auto deadline = Clock::now() + timeout;
+        for(;;) {
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if(fault_) std::rethrow_exception(fault_);
+                if(latest_) return;
+            }
+
+            if(Clock::now() >= deadline) {
+                throw std::runtime_error("等待主臂后台控制状态超时");
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds{ 2 });
+        }
+    }
+
+    void rethrow_if_failed() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if(fault_) std::rethrow_exception(fault_);
+    }
+
+    [[nodiscard]] std::uint64_t cycle_count() const noexcept {
+        return cycle_count_.load();
+    }
+
+    [[nodiscard]] std::uint64_t overrun_count() const noexcept {
+        return overrun_count_.load();
+    }
+
+private:
+    using Clock = std::chrono::steady_clock;
+
+    void run() noexcept {
+        auto next_tick = Clock::now();
+
+        while(!stop_requested_.load()) {
+            const auto cycle_start = Clock::now();
+
+            try {
+                auto output = leader_.cycle(cycle_start);
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    latest_ = std::move(output);
+                }
+                ++cycle_count_;
+            }
+            catch(...) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                fault_ = std::current_exception();
+                break;
+            }
+
+            next_tick += period_;
+            const auto after_work = Clock::now();
+            if(next_tick > after_work) {
+                std::this_thread::sleep_until(next_tick);
+            }
+            else {
+                ++overrun_count_;
+                next_tick = after_work;
+            }
+        }
+    }
+
+    tea_teleop::LeaderRuntime& leader_;
+    Clock::duration period_{};
+    std::atomic<bool> stop_requested_{ false };
+    std::atomic<std::uint64_t> cycle_count_{ 0U };
+    std::atomic<std::uint64_t> overrun_count_{ 0U };
+
+    mutable std::mutex mutex_;
+    std::optional<serial_arm::RobotCycleOutput> latest_;
+    std::exception_ptr fault_;
+    std::thread worker_;
+};
+
+} // namespace
 
 TeaTeleop::TeaTeleop(TeleopConfig config)
     : config_(std::move(config)) {}
@@ -191,65 +250,27 @@ int TeaTeleop::run() {
     for(;;) {
         clear_interrupt();
         print_main_menu();
-
         const int option = prompt_int("选择功能: ");
 
         try {
             switch(option) {
-                case 0:
-                    return 0;
-
-                case 1:
-                    read_leader_menu();
-                    break;
-
-                case 2:
-                    read_slave_menu();
-                    break;
-
-                case 3:
-                    read_compare_menu();
-                    break;
-
-                case 4:
-                    home_leader_menu();
-                    break;
-
-                case 5:
-                    home_slave_menu();
-                    break;
-
-                case 6:
-                    home_both_menu();
-                    break;
-
-                case 7:
-                    teleop(TeleopMode::Slow);
-                    break;
-
-                case 8:
-                    teleop(TeleopMode::Full);
-                    break;
-
-                case 9:
-                    config_menu();
-                    break;
-
-                case 10:
-                    software_stop();
-                    break;
-
-                case 11:
-                    release_leader_menu();
-                    break;
-
-                default:
-                    std::cout << "未知选项\n";
-                    break;
+                case 0: return 0;
+                case 1: read_leader(); break;
+                case 2: read_slave(); break;
+                case 3: read_compare(); break;
+                case 4: home_leader_menu(); break;
+                case 5: home_slave_menu(); break;
+                case 6: home_both_menu(); break;
+                case 7: teleop(TeleopMode::Slow); break;
+                case 8: teleop(TeleopMode::Full); break;
+                case 9: config_menu(); break;
+                case 10: software_stop(); break;
+                case 11: release_leader_menu(); break;
+                default: std::cout << "未知选项\n"; break;
             }
         }
-        catch(const std::exception& e) {
-            std::cerr << "[FAILED] " << e.what() << "\n";
+        catch(const std::exception& error) {
+            std::cerr << "[失败] " << error.what() << "\n";
         }
     }
 }
@@ -257,67 +278,44 @@ int TeaTeleop::run() {
 void TeaTeleop::print_main_menu() const {
     std::cout
         << "\n============================================================\n"
-        << " Tea-Picking-Dual-Arm Teleoperation\n"
+        << " Tea-Picking-Dual-Arm\n"
         << "============================================================\n"
-        << " Leader : " << config_.serial_device << " @ " << Hx10hm::BAUDRATE << "\n"
-        << " Slave  : " << config_.rm_ip << ":" << config_.rm_port << "\n"
-        << " Duration: "
-        << (config_.teleop_duration_s < 0
-            ? std::string("-1 / until Ctrl+C")
-            : std::to_string(config_.teleop_duration_s) + " s")
-        << "\n"
-        << " Direction: [";
-
-    for(std::size_t i = 0; i < kJointCount; ++i) {
-        std::cout << static_cast<int>(config_.mapping_direction[i]);
-        if(i + 1 != kJointCount) {
-            std::cout << ", ";
-        }
-    }
-
-    std::cout
-        << "]\n"
+        << " 主臂: " << config_.leader_profile << "\n"
+        << " 从臂: " << config_.rm_ip << ":" << config_.rm_port << "\n"
         << "------------------------------------------------------------\n"
         << " 1. 读取主臂\n"
         << " 2. 读取从臂\n"
         << " 3. 主从臂读取对照\n"
-        << " 4. 主臂慢速归零\n"
-        << " 5. 从臂慢速归零\n"
-        << " 6. 主从臂慢速归零\n"
-        << " 7. 慢速 Teleop\n"
-        << " 8. 全速 Teleop\n"
+        << " 4. 主臂归零\n"
+        << " 5. 从臂归零\n"
+        << " 6. 主从臂归零\n"
+        << " 7. 慢速遥操作\n"
+        << " 8. 遥操作\n"
         << " 9. 修改运行配置\n"
-        << "10. RM65-B 软件停止\n"
-        << "11. 主臂卸力 / 异常恢复\n"
+        << "10. 从臂软件停止\n"
+        << "11. 主臂卸力\n"
         << " 0. 退出\n"
         << "============================================================\n"
-        << "说明: 慢速 Teleop = 上层单周期限速 + RM65-B CANFD 低跟随 follow=false\n"
-        << "      全速 Teleop = 无上层单周期限速 + RM65-B CANFD 高跟随 follow=true\n"
-        << "      连续读取/Teleop 运行中按 Ctrl+C 返回菜单\n";
+        << "遥操作和归零过程中可按 Ctrl+C 中断\n";
 }
 
 void TeaTeleop::print_config() const {
     std::cout
         << "\n---------------- 当前配置 ----------------\n"
-        << "serial_device              = " << config_.serial_device << "\n"
-        << "rm_ip                      = " << config_.rm_ip << "\n"
-        << "rm_port                    = " << config_.rm_port << "\n"
-        << "teleop_duration_s          = " << config_.teleop_duration_s << "\n"
-        << "read_print_period_ms       = " << config_.read_print_period_ms << "\n"
-        << "teleop_period_ms           = " << config_.teleop_period_ms << "\n"
-        << "slow_max_step_degree       = " << config_.slow_max_step_degree << "\n"
-        << "max_start_error_degree     = " << config_.max_start_error_degree << " (安全阈值)\n"
-        << "leader_home_tolerance_deg  = " << config_.leader_home_tolerance_degree << "\n"
-        << "leader_home_speed          = " << config_.leader_home_speed << " steps/s\n"
-        << "leader_home_timeout_s      = " << config_.leader_home_timeout_s << " s\n"
-        << "slave_home_speed_percent   = " << config_.slave_home_speed_percent << "%\n"
-        << "mapping_direction          = [";
+        << "主臂 Profile             = " << config_.leader_profile << "\n"
+        << "RM65-B 地址              = " << config_.rm_ip << ":" << config_.rm_port << "\n"
+        << "遥操作持续时间           = " << config_.teleop_duration_s << " s\n"
+        << "慢速单周期最大变化       = " << config_.slow_max_step_degree << " deg\n"
+        << "启动最大允许角差         = " << config_.max_start_error_degree << " deg\n"
+        << "主臂归零容差             = " << config_.leader_home_tolerance_degree << " deg\n"
+        << "主臂归零速度             = " << config_.leader_home_speed_degree_s << " deg/s\n"
+        << "主臂归零超时             = " << config_.leader_home_timeout_s << " s\n"
+        << "从臂归零/对齐速度        = " << config_.slave_home_speed_percent << "%\n"
+        << "映射方向                 = [";
 
     for(std::size_t i = 0; i < kJointCount; ++i) {
         std::cout << static_cast<int>(config_.mapping_direction[i]);
-        if(i + 1 != kJointCount) {
-            std::cout << ", ";
-        }
+        if(i + 1 != kJointCount) std::cout << ", ";
     }
     std::cout << "]\n------------------------------------------\n";
 }
@@ -325,38 +323,24 @@ void TeaTeleop::print_config() const {
 void TeaTeleop::config_menu() {
     for(;;) {
         print_config();
-
         std::cout
-            << " 1. 修改主臂串口\n"
-            << " 2. 修改 RM65-B IP\n"
-            << " 3. 修改 RM65-B 端口\n"
-            << " 4. 修改 Teleop 持续时间 (-1=无限)\n"
-            << " 5. 修改关节映射方向\n"
-            << " 6. 修改连续读取打印周期\n"
-            << " 7. 修改 Teleop 期望周期\n"
-            << " 8. 修改慢速 Teleop 单周期最大角度\n"
-            << " 9. 修改主臂自动归零到位容差\n"
-            << "10. 修改主臂自动归零速度\n"
-            << "11. 修改主臂自动归零超时\n"
-            << "12. 修改从臂归零/对齐速度百分比\n"
-            << "13. 恢复默认配置\n"
+            << " 1. 修改 RM65-B IP\n"
+            << " 2. 修改 RM65-B 端口\n"
+            << " 3. 修改关节映射方向\n"
+            << " 4. 修改慢速遥操作步长\n"
+            << " 5. 修改主臂归零速度\n"
+            << " 6. 修改主臂归零容差\n"
+            << " 7. 修改主臂归零超时\n"
+            << " 8. 修改从臂归零/对齐速度\n"
+            << " 9. 修改遥操作持续时间\n"
+            << "10. 恢复默认配置\n"
             << " 0. 返回\n";
 
-        const int option = prompt_int("选择配置项: ");
-
-        switch(option) {
+        switch(prompt_int("选择配置项: ")) {
             case 0:
                 return;
 
             case 1: {
-                const std::string value = prompt_line("新的串口设备: ");
-                if(!value.empty()) {
-                    config_.serial_device = value;
-                }
-                break;
-            }
-
-            case 2: {
                 const std::string value = prompt_line("新的 RM65-B IP: ");
                 if(!value.empty()) {
                     rm_.disconnect();
@@ -365,7 +349,7 @@ void TeaTeleop::config_menu() {
                 break;
             }
 
-            case 3: {
+            case 2: {
                 const int value = prompt_int("新的 TCP 端口 [1~65535]: ");
                 if(value < 1 || value > 65535) {
                     std::cout << "端口范围无效\n";
@@ -376,99 +360,53 @@ void TeaTeleop::config_menu() {
                 break;
             }
 
-            case 4: {
-                const int value = prompt_int("Teleop 持续时间 s (-1 或 >=1): ");
-                if(value == -1 || value >= 1) {
-                    config_.teleop_duration_s = value;
-                }
-                else {
-                    std::cout << "只允许 -1 或正整数\n";
-                }
-                break;
-            }
-
-            case 5:
+            case 3:
                 mapping_direction_menu();
                 break;
 
+            case 4: {
+                const float value = prompt_float("慢速模式单周期最大变化 deg (0, 5]: ");
+                if(value > 0.0F && value <= 5.0F) config_.slow_max_step_degree = value;
+                else std::cout << "范围无效\n";
+                break;
+            }
+
+            case 5: {
+                const float value = prompt_float("主臂归零速度 deg/s [2~30]: ");
+                if(value >= 2.0F && value <= 30.0F) config_.leader_home_speed_degree_s = value;
+                else std::cout << "范围无效\n";
+                break;
+            }
+
             case 6: {
-                const int value = prompt_int("连续读取打印周期 ms [20~2000]: ");
-                if(value >= 20 && value <= 2000) {
-                    config_.read_print_period_ms = value;
-                }
-                else {
-                    std::cout << "范围无效\n";
-                }
+                const float value = prompt_float("主臂归零容差 deg [0.5~5]: ");
+                if(value >= 0.5F && value <= 5.0F) config_.leader_home_tolerance_degree = value;
+                else std::cout << "范围无效\n";
                 break;
             }
 
             case 7: {
-                const int value = prompt_int("Teleop 期望周期 ms [5~100]: ");
-                if(value >= 5 && value <= 100) {
-                    config_.teleop_period_ms = value;
-                }
-                else {
-                    std::cout << "范围无效\n";
-                }
+                const int value = prompt_int("主臂归零超时 s [5~60]: ");
+                if(value >= 5 && value <= 60) config_.leader_home_timeout_s = value;
+                else std::cout << "范围无效\n";
                 break;
             }
 
             case 8: {
-                const float value = prompt_float("慢速模式单周期最大变化 deg (0, 5]: ");
-                if(value > 0.0F && value <= 5.0F) {
-                    config_.slow_max_step_degree = value;
-                }
-                else {
-                    std::cout << "范围无效\n";
-                }
+                const int value = prompt_int("从臂归零/对齐速度百分比 [1~30]: ");
+                if(value >= 1 && value <= 30) config_.slave_home_speed_percent = value;
+                else std::cout << "范围无效\n";
                 break;
             }
 
             case 9: {
-                const float value = prompt_float("主臂自动归零到位容差 deg [0.5~5]: ");
-                if(value >= 0.5F && value <= 5.0F) {
-                    config_.leader_home_tolerance_degree = value;
-                }
-                else {
-                    std::cout << "范围无效，仅允许 0.5~5 deg\n";
-                }
+                const int value = prompt_int("遥操作持续时间 s (-1 或 >=1): ");
+                if(value == -1 || value >= 1) config_.teleop_duration_s = value;
+                else std::cout << "只允许 -1 或正整数\n";
                 break;
             }
 
-            case 10: {
-                const int value = prompt_int("主臂自动归零速度 steps/s [20~500]: ");
-                if(value >= 20 && value <= 500) {
-                    config_.leader_home_speed = static_cast<std::uint16_t>(value);
-                }
-                else {
-                    std::cout << "为保证归零安全，仅允许 20~500 steps/s\n";
-                }
-                break;
-            }
-
-            case 11: {
-                const int value = prompt_int("主臂自动归零超时 s [5~60]: ");
-                if(value >= 5 && value <= 60) {
-                    config_.leader_home_timeout_s = value;
-                }
-                else {
-                    std::cout << "范围无效，仅允许 5~60 s\n";
-                }
-                break;
-            }
-
-            case 12: {
-                const int value = prompt_int("从臂归零/对齐速度百分比 [1~30]: ");
-                if(value >= 1 && value <= 30) {
-                    config_.slave_home_speed_percent = value;
-                }
-                else {
-                    std::cout << "为保证归零安全，菜单仅允许 1~30%\n";
-                }
-                break;
-            }
-
-            case 13:
+            case 10:
                 rm_.disconnect();
                 config_ = TeleopConfig{};
                 std::cout << "已恢复默认配置\n";
@@ -487,15 +425,12 @@ void TeaTeleop::mapping_direction_menu() {
         for(std::size_t i = 0; i < kJointCount; ++i) {
             std::cout
                 << "J" << (i + 1)
-                << "=" << static_cast<int>(config_.mapping_direction[i])
-                << " ";
+                << "=" << static_cast<int>(config_.mapping_direction[i]) << " ";
         }
         std::cout << "\n";
 
         const int joint = prompt_int("选择关节 [1~6]，0 返回，7 恢复默认方向: ");
-        if(joint == 0) {
-            return;
-        }
+        if(joint == 0) return;
         if(joint == 7) {
             config_.mapping_direction = TeleopConfig{}.mapping_direction;
             continue;
@@ -510,569 +445,380 @@ void TeaTeleop::mapping_direction_menu() {
             std::cout << "方向只能是 1 或 -1\n";
             continue;
         }
-
         config_.mapping_direction[static_cast<std::size_t>(joint - 1)] =
             static_cast<float>(direction);
     }
 }
 
-void TeaTeleop::read_leader_menu() {
-    std::cout
-        << "\n1. 单次读取打印\n"
-        << "2. 持续读取打印\n"
-        << "0. 返回\n";
-
-    const int option = prompt_int("选择主臂读取方式: ");
-    if(option == 1) {
-        read_leader(ReadMode::Once);
-    }
-    else if(option == 2) {
-        read_leader(ReadMode::Continuous);
-    }
+void TeaTeleop::read_leader() {
+    tea_teleop::LeaderReadSession leader;
+    leader.open(config_.leader_profile);
+    const auto degree = leader_joint_to_degree(leader.read().pos);
+    print_degree_array("主臂", degree);
 }
 
-void TeaTeleop::read_slave_menu() {
-    std::cout
-        << "\n1. 单次读取打印\n"
-        << "2. 持续读取打印\n"
-        << "0. 返回\n";
-
-    const int option = prompt_int("选择从臂读取方式: ");
-    if(option == 1) {
-        read_slave(ReadMode::Once);
-    }
-    else if(option == 2) {
-        read_slave(ReadMode::Continuous);
-    }
-}
-
-void TeaTeleop::read_compare_menu() {
-    std::cout
-        << "\n1. 单次读取对照\n"
-        << "2. 持续读取对照\n"
-        << "0. 返回\n";
-
-    const int option = prompt_int("选择主从对照方式: ");
-    if(option == 1) {
-        read_compare(ReadMode::Once);
-    }
-    else if(option == 2) {
-        read_compare(ReadMode::Continuous);
-    }
-}
-
-void TeaTeleop::read_leader(ReadMode mode) {
-    SerialPort serial(config_.serial_device, make_serial_config());
-    Hx10hm leader(serial);
-
-    clear_interrupt();
-
-    do {
-        const auto raw = leader.read_all_pos_raw();
-        const auto degree = leader_raw_to_degree(raw);
-        print_leader_line(raw, degree);
-
-        if(mode == ReadMode::Once) {
-            break;
-        }
-
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds{ config_.read_print_period_ms });
-    }
-    while(!interrupted());
-
-    if(interrupted()) {
-        std::cout << "主臂持续读取已中断\n";
-    }
-    clear_interrupt();
-}
-
-void TeaTeleop::read_slave(ReadMode mode) {
+void TeaTeleop::read_slave() {
     ensure_rm_connected();
-    clear_interrupt();
-
-    do {
-        print_slave_line(rm_.read_all_degree());
-
-        if(mode == ReadMode::Once) {
-            break;
-        }
-
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds{ config_.read_print_period_ms });
-    }
-    while(!interrupted());
-
-    if(interrupted()) {
-        std::cout << "从臂持续读取已中断\n";
-    }
-    clear_interrupt();
+    print_degree_array("从臂", rm_.read_all_degree());
 }
 
-void TeaTeleop::read_compare(ReadMode mode) {
-    SerialPort serial(config_.serial_device, make_serial_config());
-    Hx10hm leader(serial);
+void TeaTeleop::read_compare() {
+    tea_teleop::LeaderReadSession leader;
+    leader.open(config_.leader_profile);
     ensure_rm_connected();
-    clear_interrupt();
 
-    do {
-        const auto raw = leader.read_all_pos_raw();
-        const auto leader_degree = leader_raw_to_degree(raw);
-        const auto slave_degree = rm_.read_all_degree();
-
-        print_leader_line(raw, leader_degree);
-        print_slave_line(slave_degree);
-        print_difference_line(leader_degree, slave_degree);
-
-        if(mode == ReadMode::Once) {
-            break;
-        }
-
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds{ config_.read_print_period_ms });
-    }
-    while(!interrupted());
-
-    if(interrupted()) {
-        std::cout << "主从持续对照已中断\n";
-    }
-    clear_interrupt();
+    const auto leader_degree = leader_joint_to_degree(leader.read().pos);
+    const auto slave_degree = rm_.read_all_degree();
+    print_degree_array("主臂", leader_degree);
+    print_degree_array("从臂", slave_degree);
+    print_difference_line(leader_degree, slave_degree);
 }
 
 void TeaTeleop::home_leader_menu() {
-    SerialPort serial(config_.serial_device, make_serial_config());
-    Hx10hm leader(serial);
-    (void)home_leader(leader, true);
+    (void)home_leader();
 }
 
 void TeaTeleop::home_slave_menu() {
-    (void)home_slave(true);
+    (void)home_slave();
 }
 
 void TeaTeleop::home_both_menu() {
-    if(!confirm_token(
-        "HOME_BOTH",
-        "主从臂都将自动慢速回到零点，确认两侧运动路径安全后输入 HOME_BOTH: ")) {
-        std::cout << "已取消\n";
-        return;
-    }
-
-    // 先让 RM65-B 规划回零，再驱动 HX-10HM 主臂回 2048
-    if(!home_slave(false)) {
-        return;
-    }
-
-    SerialPort serial(config_.serial_device, make_serial_config());
-    Hx10hm leader(serial);
-    (void)home_leader(leader, false);
+    if(!home_slave()) return;
+    (void)home_leader();
 }
 
 void TeaTeleop::release_leader_menu() {
-    if(!confirm_token(
-        "RELEASE_LEADER",
-        "将向 HX-10HM ID1~6 逐个发送 Torque OFF，输入 RELEASE_LEADER: ")) {
-        std::cout << "已取消\n";
-        return;
-    }
-
-    SerialPort serial(config_.serial_device, make_serial_config());
-    Hx10hm leader(serial);
-
-    if(release_leader_torque(leader)) {
-        std::cout << "主臂 ID1~6 已全部确认卸力\n";
-    }
-    else {
-        std::cerr
-            << "[WARNING] 存在舵机未能确认 Torque OFF\n"
-            << "          请先停止操作，必要时断电重启主臂后再继续\n";
-    }
+    tea_teleop::LeaderReadSession leader;
+    leader.open(config_.leader_profile);
+    leader.close();
+    std::cout << "主臂已卸力\n";
 }
 
-bool TeaTeleop::home_leader(Hx10hm& leader, bool require_confirmation) {
-    if(require_confirmation &&
-        !confirm_token(
-            "HOME_LEADER",
-            "主臂 HX-10HM 将上力并以低速自动回到 raw=2048，确认无机械干涉后输入 HOME_LEADER: ")) {
-        std::cout << "已取消\n";
-        return false;
+bool TeaTeleop::home_leader() {
+    tea_teleop::LeaderRuntime leader;
+    leader.initialize(config_.leader_profile);
+
+    using Clock = std::chrono::steady_clock;
+    const double frequency_hz = leader.control_frequency_hz();
+    if(!std::isfinite(frequency_hz) || frequency_hz <= 0.0) {
+        throw std::runtime_error("主臂控制频率无效");
     }
 
-    const auto before_raw = leader.read_all_pos_raw();
-    print_leader_line(before_raw, leader_raw_to_degree(before_raw));
+    const auto period = std::chrono::duration_cast<Clock::duration>(
+        std::chrono::duration<double>(1.0 / frequency_hz));
+    const double speed_rad_s =
+        static_cast<double>(config_.leader_home_speed_degree_s) / kRadToDegree;
+    const double tolerance_rad =
+        static_cast<double>(config_.leader_home_tolerance_degree) / kRadToDegree;
 
     std::cout
-        << "主臂自动归零开始\n"
-        << "- 目标: ID1~6 raw=2048\n"
-        << "- 速度: " << config_.leader_home_speed << " steps/s\n"
-        << "- 到位容差: +/- " << config_.leader_home_tolerance_degree << " deg\n"
-        << "- 超时: " << config_.leader_home_timeout_s << " s\n"
-        << "- Ctrl+C 会中断归零并立即尝试逐个 Torque OFF\n";
+        << "主臂归零开始  速度=" << config_.leader_home_speed_degree_s
+        << " deg/s  容差=" << config_.leader_home_tolerance_degree
+        << " deg\n";
 
     clear_interrupt();
-    bool torque_may_be_enabled = false;
-
     try {
-        // WRITE DATA 为非广播写，协议要求每个 ID 返回
-        // FF FF ID 02 ERROR CHECKSUM
-        // Hx10hm::set_all_torque() 会逐个等待并校验这个 ACK
-        torque_may_be_enabled = true;
-        leader.set_all_torque(true);
+        leader.activate(serial_arm::JointImpedanceMode::RIGID_TRACKING);
 
-        // 给舵机一个很短的上力稳定时间，再一次性同步下发六关节目标
-        std::this_thread::sleep_for(std::chrono::milliseconds{ 30 });
+        serial_arm::JointVector reference = leader.joint_state().pos;
+        if(reference.size() != kJointCount) {
+            throw std::runtime_error("主臂关节状态数量不是 6");
+        }
 
-        std::array<std::uint16_t, kJointCount> zero_raw{};
-        zero_raw.fill(Hx10hm::CENTER_RAW);
-
-        // SYNC WRITE 使用广播 ID，无状态包返回
-        // 随后持续 READ DATA 验证真实位置，而不是把“发送成功”当作“已经到位”
-        leader.sync_write_all_pos_raw(
-            zero_raw,
-            config_.leader_home_speed,
-            0);
-
-        const auto deadline =
-            std::chrono::steady_clock::now() +
+        serial_arm::JointVector actual_position = reference;
+        serial_arm::JointVector reference_vel(kJointCount, 0.0);
+        serial_arm::JointVector static_assist(kJointCount, 0.0);
+        const auto deadline = Clock::now() +
             std::chrono::seconds{ config_.leader_home_timeout_s };
-
-        std::size_t transient_read_failures = 0;
+        auto next_tick = Clock::now();
+        auto last_print = next_tick;
+        std::size_t settled_cycles = 0U;
 
         while(!interrupted()) {
-            try {
-                const auto raw = leader.read_all_pos_raw();
-                transient_read_failures = 0;
+            const auto now = Clock::now();
+            if(now >= deadline) throw std::runtime_error("主臂归零超时");
 
-                print_leader_line(raw, leader_raw_to_degree(raw));
-
-                if(all_leader_near_zero(raw, config_.leader_home_tolerance_degree)) {
-                    const bool released = release_leader_torque(leader);
-                    torque_may_be_enabled = false;
-
-                    if(!released) {
-                        throw std::runtime_error(
-                            "主臂已到零点，但至少一个 HX-10HM 未能确认 Torque OFF");
-                    }
-
-                    std::cout << "主臂已自动回到零点并确认卸力\n";
-                    clear_interrupt();
-                    return true;
-                }
-            }
-            catch(const std::exception& e) {
-                ++transient_read_failures;
-                std::cerr
-                    << "[WARNING] 主臂归零过程读取失败 "
-                    << transient_read_failures << "/3: "
-                    << e.what() << "\n";
-
-                if(transient_read_failures >= 3U) {
-                    throw;
+            const double max_step = speed_rad_s / frequency_hz;
+            for(std::size_t i = 0; i < kJointCount; ++i) {
+                const double error = -reference[i];
+                const double step = std::clamp(error, -max_step, max_step);
+                reference[i] += step;
+                reference_vel[i] = step * frequency_hz;
+                if(std::abs(error) <= max_step) {
+                    reference[i] = 0.0;
+                    reference_vel[i] = 0.0;
                 }
             }
 
-            if(std::chrono::steady_clock::now() >= deadline) {
-                throw std::runtime_error("主臂自动归零超时");
+            for(std::size_t i = 0; i < kJointCount; ++i) {
+                const double actual_error = -actual_position[i];
+                static_assist[i] =
+                    std::abs(actual_error) > tolerance_rad ?
+                    std::copysign(kHomeStaticAssistNm, actual_error) :
+                    0.0;
             }
 
-            std::this_thread::sleep_for(std::chrono::milliseconds{ 100 });
+            leader.set_cmd(
+                serial_arm::JointPosVelTorCmd{
+                    reference,
+                    reference_vel,
+                    static_assist,
+                },
+                now);
+            const auto output = leader.cycle(now);
+            actual_position = output.joint_state.pos;
+
+            bool settled = true;
+            for(std::size_t i = 0; i < kJointCount; ++i) {
+                if(std::abs(output.joint_state.pos[i]) > tolerance_rad ||
+                    std::abs(output.joint_state.vel[i]) > 0.10) {
+                    settled = false;
+                    break;
+                }
+            }
+            settled_cycles = settled ? settled_cycles + 1U : 0U;
+
+            if(now - last_print >= std::chrono::milliseconds{ 500 }) {
+                print_degree_array(
+                    "主臂当前位置",
+                    leader_joint_to_degree(output.joint_state.pos));
+                last_print = now;
+            }
+
+            if(settled_cycles >= 10U) {
+                if(!leader.safe_deactivate()) {
+                    throw std::runtime_error("主臂到达零点，但失能失败");
+                }
+                std::cout << "主臂归零完成并已卸力\n";
+                clear_interrupt();
+                return true;
+            }
+
+            next_tick += period;
+            const auto after_work = Clock::now();
+            if(next_tick > after_work) std::this_thread::sleep_until(next_tick);
+            else next_tick = after_work;
         }
 
-        const bool released = release_leader_torque(leader);
-        torque_may_be_enabled = false;
+        if(!leader.safe_deactivate()) {
+            throw std::runtime_error("主臂归零已中断，但失能失败");
+        }
+        std::cout << "主臂归零已中断并已卸力\n";
         clear_interrupt();
-
-        if(!released) {
-            throw std::runtime_error(
-                "主臂归零已中断，且至少一个 HX-10HM 未能确认 Torque OFF");
-        }
-
-        std::cout << "主臂归零已由用户中断，主臂已确认卸力\n";
         return false;
     }
     catch(...) {
-        if(torque_may_be_enabled) {
-            const bool released = release_leader_torque(leader);
-            if(!released) {
-                std::cerr
-                    << "[CRITICAL] 主臂归零异常后无法确认全部 Torque OFF\n"
-                    << "           请不要继续 Teleop，先断电检查/重启主臂\n";
-            }
-        }
-
+        (void)leader.safe_deactivate();
         clear_interrupt();
         throw;
     }
 }
 
-bool TeaTeleop::release_leader_torque(Hx10hm& leader) noexcept {
-    bool all_released = true;
-
-    for(std::uint8_t id = 1; id <= Hx10hm::JOINT_COUNT; ++id) {
-        bool released = false;
-
-        // 卸力是异常恢复路径，单个 ID 最多尝试两次
-        for(int attempt = 1; attempt <= 2 && !released; ++attempt) {
-            try {
-                leader.set_torque(id, false);
-                released = true;
-            }
-            catch(const std::exception& e) {
-                std::cerr
-                    << "[WARNING] HX-10HM ID" << static_cast<int>(id)
-                    << " Torque OFF 第 " << attempt
-                    << " 次失败: " << e.what() << "\n";
-
-                std::this_thread::sleep_for(std::chrono::milliseconds{ 20 });
-            }
-        }
-
-        if(!released) {
-            all_released = false;
-        }
-    }
-
-    return all_released;
-}
-
-bool TeaTeleop::home_slave(bool require_confirmation) {
+bool TeaTeleop::home_slave() {
     ensure_rm_connected();
-
-    if(require_confirmation &&
-        !confirm_token(
-            "HOME_SLAVE",
-            "RM65-B 将使用规划运动慢速回到 [0,0,0,0,0,0] deg，输入 HOME_SLAVE: ")) {
-        std::cout << "已取消\n";
-        return false;
-    }
-
-    const auto before = rm_.read_all_degree();
-    print_degree_array("RM65-B before home", before);
+    print_degree_array("从臂归零前", rm_.read_all_degree());
 
     const std::array<float, kJointCount> zero{};
     rm_.movej_degree(zero, config_.slave_home_speed_percent, true);
 
-    const auto after = rm_.read_all_degree();
-    print_degree_array("RM65-B after home", after);
-
+    print_degree_array("从臂归零后", rm_.read_all_degree());
     std::cout << "从臂归零完成\n";
     return true;
 }
 
 void TeaTeleop::teleop(TeleopMode mode) {
-    SerialPort serial(config_.serial_device, make_serial_config());
-    Hx10hm leader(serial);
+    tea_teleop::LeaderRuntime leader;
+    leader.initialize(config_.leader_profile);
     ensure_rm_connected();
 
     std::cout
-        << "\nTeleop 启动前检查\n"
-        << "- 主臂 2048 对应 0 deg\n"
-        << "- 不归零时，任一关节主从初始角差 > "
-        << config_.max_start_error_degree
-        << " deg 将拒绝启动\n";
-
-    const bool return_zero = prompt_yes_no("开始 Teleop 前是否让主从臂都自动慢速回零? [y/N]: ");
-
-    if(return_zero) {
-        if(!confirm_token(
-            "ZERO",
-            "确认主从臂回零路径均安全后输入 ZERO: ")) {
-            std::cout << "已取消 Teleop\n";
-            return;
-        }
-
-        // 先让从臂规划回零，再让主臂自动回到 raw=2048 并卸力
-        if(!home_slave(false)) {
-            return;
-        }
-        if(!home_leader(leader, false)) {
-            return;
-        }
-    }
-
-    auto first_raw = leader.read_all_pos_raw();
-    auto first_target = leader_raw_to_degree(first_raw);
-    auto slave_start = rm_.read_all_degree();
-
-    print_leader_line(first_raw, first_target);
-    print_slave_line(slave_start);
-    print_difference_line(first_target, slave_start);
-
-    validate_start_error(first_target, slave_start);
-
-    const int effective_period_ms =
-        mode == TeleopMode::Full
-        ? std::min(config_.teleop_period_ms, 10)
-        : config_.teleop_period_ms;
-
-    std::cout
-        << "模式: "
-        << (mode == TeleopMode::Slow ? "慢速" : "全速")
-        << "\n持续时间: "
-        << (config_.teleop_duration_s < 0
-            ? std::string("-1 / Ctrl+C 停止")
-            : std::to_string(config_.teleop_duration_s) + " s")
-        << "\n配置周期: " << config_.teleop_period_ms << " ms"
-        << "\n实际周期: " << effective_period_ms << " ms\n";
-
-    if(mode == TeleopMode::Slow) {
-        std::cout
-            << "慢速模式单周期最大变化: "
-            << config_.slow_max_step_degree
-            << " deg\n";
-    }
-    else {
-        std::cout
-            << "全速模式不做上层单周期角度限速\n"
-            << "RM65-B CANFD 使用高跟随 follow=true\n"
-            << "启动前若存在小于等于 30 deg 的初始角差，将先使用规划运动慢速对齐\n";
-    }
-
-    const std::string token =
-        mode == TeleopMode::Slow ? "SLOW" : "FULL";
-
-    if(!confirm_token(
-        token,
-        "确认实体急停可用且机械臂周围安全后输入 " + token + ": ")) {
-        std::cout << "已取消\n";
-        return;
-    }
-
-    // 用户确认后重新读取，避免确认过程中主臂姿态已经变化
-    first_raw = leader.read_all_pos_raw();
-    first_target = leader_raw_to_degree(first_raw);
-    slave_start = rm_.read_all_degree();
-    validate_start_error(first_target, slave_start);
-
-    if(mode == TeleopMode::Full &&
-        max_abs_difference(first_target, slave_start) > kFullAlignToleranceDegree) {
-        std::cout
-            << "全速模式启动前先慢速对齐从臂到当前主臂映射姿态\n";
-        rm_.movej_degree(
-            first_target,
-            config_.slave_home_speed_percent,
-            true);
-        slave_start = rm_.read_all_degree();
-    }
+        << (mode == TeleopMode::Slow ? "慢速遥操作开始\n" : "遥操作开始\n")
+        << "主臂使用 COMPLIANT_DRAG + GRAVITY，Ctrl+C 结束\n";
 
     clear_interrupt();
+    bool rm_stop_ok = true;
+    std::unique_ptr<LeaderCycleWorker> worker;
 
-    auto previous_command = slave_start;
-    auto next_tick = std::chrono::steady_clock::now();
-    const auto start_time = next_tick;
-    auto last_status = start_time;
-    std::uint64_t cycle_count = 0;
-    std::uint64_t overrun_count = 0;
+    auto safe_shutdown = [&]() noexcept {
+        try {
+            rm_.stop();
+        }
+        catch(const std::exception& error) {
+            rm_stop_ok = false;
+            std::cerr << "[警告] 从臂停止失败: " << error.what() << "\n";
+        }
+
+        if(worker) worker->stop();
+
+        const bool leader_stop_ok = leader.safe_deactivate();
+        if(!leader_stop_ok) std::cerr << "[警告] 主臂安全失能失败\n";
+        return rm_stop_ok && leader_stop_ok;
+    };
 
     try {
-        while(!interrupted()) {
-            const auto now = std::chrono::steady_clock::now();
+        leader.activate(serial_arm::JointImpedanceMode::COMPLIANT_DRAG);
 
+        worker = std::make_unique<LeaderCycleWorker>(leader);
+        worker->start();
+        worker->wait_until_ready(std::chrono::milliseconds{ 500 });
+
+        // 让重力补偿先稳定几个周期，再读取主臂姿态
+        std::this_thread::sleep_for(std::chrono::milliseconds{ 200 });
+        worker->rethrow_if_failed();
+
+        auto output = worker->latest();
+        auto target = leader_joint_to_degree(output.joint_state.pos);
+        auto slave_start = rm_.read_all_degree();
+        print_difference_line(target, slave_start);
+        validate_start_error(target, slave_start);
+
+        if(mode == TeleopMode::Full &&
+            max_abs_difference(target, slave_start) > kFullAlignToleranceDegree) {
+            std::cout
+                << "从臂正在平滑对齐到当前主臂姿态"
+                << "，对齐期间可按 Ctrl+C 中断\n";
+
+            auto align_command = slave_start;
+            auto align_next_tick = std::chrono::steady_clock::now();
+            const auto align_deadline = align_next_tick + kAlignTimeout;
+            std::size_t align_settled_cycles = 0U;
+
+            while(!interrupted()) {
+                if(std::chrono::steady_clock::now() >= align_deadline) {
+                    throw std::runtime_error("从臂对齐超时");
+                }
+
+                worker->rethrow_if_failed();
+                output = worker->latest();
+                target = leader_joint_to_degree(output.joint_state.pos);
+
+                for(std::size_t i = 0; i < kJointCount; ++i) {
+                    const float error = target[i] - align_command[i];
+                    align_command[i] += std::clamp(
+                        error,
+                        -kAlignMaxStepDegree,
+                        kAlignMaxStepDegree);
+                }
+
+                rm_.write_all_degree(align_command, false);
+
+                const bool aligned =
+                    max_abs_difference(target, align_command) <=
+                    kAlignSettleToleranceDegree;
+                align_settled_cycles = aligned ? align_settled_cycles + 1U : 0U;
+                if(align_settled_cycles >= 10U) break;
+
+                align_next_tick += kTeleopPeriod;
+                const auto after_align_work = std::chrono::steady_clock::now();
+                if(align_next_tick > after_align_work) {
+                    std::this_thread::sleep_until(align_next_tick);
+                }
+                else {
+                    align_next_tick = after_align_work;
+                }
+            }
+
+            if(interrupted()) {
+                (void)safe_shutdown();
+                clear_interrupt();
+                return;
+            }
+
+            worker->rethrow_if_failed();
+            output = worker->latest();
+            target = leader_joint_to_degree(output.joint_state.pos);
+            slave_start = rm_.read_all_degree();
+            print_difference_line(target, slave_start);
+        }
+
+        auto previous_command = slave_start;
+        const auto start_time = std::chrono::steady_clock::now();
+        auto last_status = start_time;
+        auto next_tick = start_time;
+        std::uint64_t teleop_cycle_count = 0U;
+
+        while(!interrupted()) {
+            const auto cycle_start = std::chrono::steady_clock::now();
             if(config_.teleop_duration_s >= 0 &&
-                now - start_time >= std::chrono::seconds{ config_.teleop_duration_s }) {
+                cycle_start - start_time >=
+                    std::chrono::seconds{ config_.teleop_duration_s }) {
                 break;
             }
 
-            const auto raw = leader.read_all_pos_raw();
-            const auto target = leader_raw_to_degree(raw);
+            worker->rethrow_if_failed();
+            output = worker->latest();
+            target = leader_joint_to_degree(output.joint_state.pos);
 
-            const auto command =
-                mode == TeleopMode::Slow
-                ? limit_slow_command(target, previous_command)
-                : target;
+            const auto command = mode == TeleopMode::Slow ?
+                limit_slow_command(target, previous_command) : target;
 
-            // 慢速模式: follow=false，保留控制器低跟随，并叠加上层单周期角度限速
-            // 全速模式: follow=true，取消上层角度限速，直接使用 RM65-B CANFD 高跟随
-            const bool high_follow = mode == TeleopMode::Full;
-            rm_.write_all_degree(command, high_follow);
+            rm_.write_all_degree(command, mode == TeleopMode::Full);
             previous_command = command;
-            ++cycle_count;
+            ++teleop_cycle_count;
 
-            const auto status_now = std::chrono::steady_clock::now();
-            if(status_now - last_status >= std::chrono::seconds{ 1 }) {
-                const auto elapsed_ms =
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        status_now - start_time)
-                    .count();
-
+            const auto after_work = std::chrono::steady_clock::now();
+            if(after_work - last_status >= std::chrono::seconds{ 1 }) {
                 std::cout
-                    << "[Teleop] elapsed=" << elapsed_ms / 1000.0
-                    << "s cycles=" << cycle_count
-                    << " overruns=" << overrun_count
-                    << " target_J1=" << std::fixed << std::setprecision(1)
-                    << target[0] << "deg\n";
-
-                last_status = status_now;
+                    << "遥操作运行中  发送周期=" << teleop_cycle_count
+                    << "  主臂周期=" << worker->cycle_count()
+                    << "  主臂超期=" << worker->overrun_count()
+                    << "  J1=" << std::fixed << std::setprecision(1)
+                    << target[0] << " deg"
+                    << "  J2重力前馈=" << output.model_feedforward[1] << " N.m\n";
+                last_status = after_work;
             }
 
-            next_tick += std::chrono::milliseconds{ effective_period_ms };
-            const auto after_work = std::chrono::steady_clock::now();
-
+            next_tick += kTeleopPeriod;
             if(next_tick > after_work) {
                 std::this_thread::sleep_until(next_tick);
             }
             else {
-                ++overrun_count;
                 next_tick = after_work;
             }
         }
+
+        if(!safe_shutdown()) {
+            throw std::runtime_error("遥操作结束时安全停止未完全成功");
+        }
+
+        std::cout
+            << "遥操作结束  发送周期=" << teleop_cycle_count
+            << "  主臂周期=" << (worker ? worker->cycle_count() : 0U)
+            << "  主臂超期=" << (worker ? worker->overrun_count() : 0U)
+            << "\n";
     }
     catch(...) {
-        // 通信异常时尝试停止当前 RM 轨迹，随后把原始异常继续抛给菜单层
-        try {
-            rm_.stop();
-        }
-        catch(const std::exception&) {
-        }
+        (void)safe_shutdown();
         clear_interrupt();
         throw;
     }
-
-    if(interrupted()) {
-        std::cout << "Teleop 已由 Ctrl+C 中断\n";
-    }
-    else {
-        std::cout << "Teleop 已达到配置持续时间\n";
-    }
-
-    std::cout
-        << "Teleop 结束: cycles=" << cycle_count
-        << " overruns=" << overrun_count << "\n";
 
     clear_interrupt();
 }
 
 void TeaTeleop::software_stop() {
-    if(!confirm_token(
-        "STOP",
-        "确认要发送 RM65-B 软件停止命令后输入 STOP: ")) {
-        std::cout << "已取消\n";
-        return;
-    }
-
     ensure_rm_connected();
     rm_.stop();
-    std::cout << "RM65-B 软件停止命令已发送\n";
+    std::cout << "从臂软件停止命令已发送\n";
 }
 
 void TeaTeleop::ensure_rm_connected() {
-    if(!rm_.is_connected()) {
-        rm_.connect(config_.rm_ip, config_.rm_port);
-        std::cout
-            << "RM65-B connection established: "
-            << config_.rm_ip << ":" << config_.rm_port << "\n";
-    }
+    if(rm_.is_connected()) return;
+    rm_.connect(config_.rm_ip, config_.rm_port);
+    std::cout << "从臂已连接: " << config_.rm_ip << ":" << config_.rm_port << "\n";
 }
 
-std::array<float, kJointCount> TeaTeleop::leader_raw_to_degree(
-    const std::array<std::uint16_t, kJointCount>& raw) const {
-    std::array<float, kJointCount> degree{};
-
-    for(std::size_t i = 0; i < kJointCount; ++i) {
-        degree[i] =
-            config_.mapping_direction[i] *
-            static_cast<float>(Hx10hm::raw_to_degree(raw[i]));
+std::array<float, kJointCount> TeaTeleop::leader_joint_to_degree(
+    const std::vector<double>& joint_position) const {
+    if(joint_position.size() != kJointCount) {
+        throw std::runtime_error("主臂关节状态数量不是 6");
     }
 
+    std::array<float, kJointCount> degree{};
+    for(std::size_t i = 0; i < kJointCount; ++i) {
+        degree[i] = config_.mapping_direction[i] *
+            static_cast<float>(joint_position[i] * kRadToDegree);
+    }
     return degree;
 }
 
@@ -1080,14 +826,12 @@ std::array<float, kJointCount> TeaTeleop::limit_slow_command(
     const std::array<float, kJointCount>& target,
     const std::array<float, kJointCount>& previous) const {
     std::array<float, kJointCount> command{};
-
     for(std::size_t i = 0; i < kJointCount; ++i) {
         command[i] = std::clamp(
             target[i],
             previous[i] - config_.slow_max_step_degree,
             previous[i] + config_.slow_max_step_degree);
     }
-
     return command;
 }
 
@@ -1112,29 +856,39 @@ void TeaTeleop::validate_start_error(
         throw std::runtime_error(
             "主从初始角差超过 " +
             std::to_string(config_.max_start_error_degree) +
-            " deg，拒绝启动 Teleop: " + error.str());
+            " deg，拒绝启动遥操作: " + error.str());
     }
 }
 
 int main(int argc, char** argv) {
     TeleopConfig config;
 
-    // 保留 teleop_test.cpp 原先的命令行兼容方式：
-    // argv[1] = RM65-B IP
-    // argv[2] = HX-10HM 串口设备
-    if(argc >= 2) {
-        config.rm_ip = argv[1];
+    if(argc >= 2 && std::string(argv[1]) == "--check-leader") {
+        try {
+            tea_teleop::LeaderRuntime runtime;
+            runtime.initialize(config.leader_profile);
+            std::cout
+                << "主臂配置检查通过: " << config.leader_profile
+                << "  控制频率=" << runtime.control_frequency_hz() << " Hz\n";
+            return 0;
+        }
+        catch(const std::exception& error) {
+            std::cerr << "主臂配置检查失败: " << error.what() << "\n";
+            return 1;
+        }
     }
-    if(argc >= 3) {
-        config.serial_device = argv[2];
+
+    if(argc != 1) {
+        std::cerr << "用法: ros2 run tea_teleop teleop\n";
+        return 2;
     }
 
     try {
         TeaTeleop app(config);
         return app.run();
     }
-    catch(const std::exception& e) {
-        std::cerr << "[FATAL] " << e.what() << "\n";
+    catch(const std::exception& error) {
+        std::cerr << "[致命错误] " << error.what() << "\n";
         return 1;
     }
 }

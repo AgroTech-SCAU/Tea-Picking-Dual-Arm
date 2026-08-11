@@ -1,29 +1,19 @@
-# Tea Leader Right - Hiwonder HX-10HM Hardware 配置
-#
-# 目录
-# 01 serial            串口与通信健壮性
-# 02 feedback          实时状态与低频诊断策略
-# 03 actuator limits   执行器能力与 Software MIT 映射
-#
-# 力矩说明
-# - HX-10HM 标称堵转力矩约 0.980665 N·m（11.1 V）
-# - 当前右主操作臂离线重力模型扫描得到最大 |g(q)| 约 0.726629 N·m（J2）
-# - 因此 Robot Support 将软件命令上限提高到 0.80 N·m，并使用 pwm_limit=816
-# - 0.80 N·m 仅作为软件/峰值上限，不代表建议长期连续负载
-# - gravity_scale 默认仍为 0，启用比例必须结合温升、电流与手感逐步验证
+# Tea Leader Right Hiwonder Hardware 配置
+# 六轴 HX-10HM 使用 Software MIT + PWM Open-Loop
+# max_effort=0.80 N.m 为软件峰值上限
 
 hiwonder:
   # 01 serial
   serial_port: /dev/ttyACM0              # HX 总线串口
   baudrate: 1000000                      # HX-10HM 默认 1 Mbps
-  read_timeout_ms: 8                     # 单个状态应答等待上限，较原 5 ms 增加瞬态余量
+  read_timeout_ms: 8                     # 状态读取超时
   write_timeout_ms: 20                   # 写入及 ACK 超时
   feedback_timeout_ms: 50                # Core 允许的最近有效反馈年龄
   startup_read_cycles: 3                 # activate 后连续有效状态确认次数
   read_retry_count: 1                    # 实时状态 SYNC READ 瞬态失败时最多重试 1 次
 
   # 02 feedback
-  current_read_divider: 10               # 电流仅作诊断；100 Hz 控制时约 10 Hz 更新，避免每帧第二次 SYNC READ
+  current_read_divider: 10               # 电流诊断约 10 Hz 更新
   velocity_encoding: bit15_sign_magnitude
   torque_feedback_mode: unavailable_zero # 尚未完成电流到真实关节力矩标定，tau_feedback 保持 0
   restore_position_mode_on_deactivate: false

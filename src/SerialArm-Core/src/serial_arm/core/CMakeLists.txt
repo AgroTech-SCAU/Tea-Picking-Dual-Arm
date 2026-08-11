@@ -188,7 +188,7 @@ target_link_libraries(serial_arm_dynamics
         Eigen3::Eigen
 )
 
-# 优先使用现代 imported target；兼容部分旧版 Pinocchio 包
+# 优先使用 imported target；兼容未导出该 target 的 Pinocchio 包
 if(TARGET pinocchio::pinocchio)
     target_link_libraries(serial_arm_dynamics PUBLIC pinocchio::pinocchio)
 elseif(pinocchio_LIBRARIES)

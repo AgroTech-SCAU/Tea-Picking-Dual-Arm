@@ -235,7 +235,7 @@ auto channel = result.value();
 
 `acquire_channel()` 会通过 Core `BusPool` 原子获取或创建同名物理 Bus；同名 Bus 的串口与波特率必须一致；获得 Channel 后设备层只使用 `send()`、`receive()` 与逻辑 `flush()`
 
-当前 `DamiaoUsbCanBus` 仅支持 Classic CAN 标准帧，数据长度最大 8 字节，扩展 CAN ID、CAN FD、RTR 和跨进程共享不属于 v0.2.0 能力
+当前 `DamiaoUsbCanBus` 仅支持 Classic CAN 标准帧，数据长度最大 8 字节，当前不支持扩展 CAN ID、CAN FD、RTR 和跨进程共享
 
 ## 2.3. ROS 2 Python Binding 安装约束
 

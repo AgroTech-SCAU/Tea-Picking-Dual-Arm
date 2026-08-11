@@ -70,7 +70,7 @@ DamiaoUsbCanBus
 SerialPort
 ```
 
-如果新硬件 backend 或未来 EEF 需要共享同一条 CAN 总线，应通过具体 Protocol 提供的 acquisition API 获取带 filter 的独立 `CanChannel`；以达妙官方 USB2CAN 为例使用 `damiao_usb2can::acquire_channel()`，普通设备层代码不直接获取、关闭或 flush 共享物理 `CanBus`；当前版本只提供同进程共享基础设施，不包含具体 EEF backend；`DamiaoUsbCanBus` 仅表示达妙官方 USB2CAN 模块的私有串口协议实现，不代表通用 USB2CAN
+如果新硬件 backend 或未来 EEF 需要共享同一条 CAN 总线，应通过具体 Protocol 提供的 acquisition API 获取带 filter 的独立 `CanChannel`；以达妙官方 USB2CAN 为例使用 `damiao_usb2can::acquire_channel()`，普通设备层代码不直接获取、关闭或 flush 共享物理 `CanBus`；当前实现只提供同进程共享基础设施，不包含具体 EEF backend；`DamiaoUsbCanBus` 仅表示达妙官方 USB2CAN 模块的私有串口协议实现，不代表通用 USB2CAN
 
 未来外设或 EEF 可以通过同一个 bus name 获取独立 channel：
 
