@@ -35,6 +35,7 @@ constexpr double kHomeStaticAssistNm = 0.04;
 constexpr float kAlignMaxStepDegree = 0.25F;
 constexpr float kAlignSettleToleranceDegree = 0.5F;
 constexpr auto kAlignTimeout = std::chrono::seconds{ 8 };
+constexpr auto kStatusInterval = std::chrono::seconds{ 2 };
 
 volatile std::sig_atomic_t g_interrupt_requested = 0;
 
@@ -144,8 +145,8 @@ TeleopConfig load_teleop_config(const std::string& path) {
     if(config.teleop_duration_s != -1 && config.teleop_duration_s < 1) {
         throw std::runtime_error("teleop.duration_s 只允许 -1 或正整数");
     }
-    if(config.teleop_period_ms < 5 || config.teleop_period_ms > 100) {
-        throw std::runtime_error("teleop.period_ms 必须位于 [5, 100]");
+    if(config.teleop_period_ms < 5 || config.teleop_period_ms > 10) {
+        throw std::runtime_error("teleop.period_ms 必须位于 [5, 10]");
     }
     if(config.slow_max_step_degree <= 0.0F || config.slow_max_step_degree > 5.0F) {
         throw std::runtime_error("teleop.slow_max_step_degree 必须位于 (0, 5]");
@@ -235,14 +236,29 @@ void print_difference_line(
     print_degree_array("差值", difference);
 }
 
+struct DifferenceSummary {
+    float max_abs_degree{ 0.0F };
+    std::size_t joint_index{ 0U };
+};
+
+DifferenceSummary summarize_difference(
+    const std::array<float, kJointCount>& lhs,
+    const std::array<float, kJointCount>& rhs) {
+    DifferenceSummary result;
+    for(std::size_t i = 0; i < kJointCount; ++i) {
+        const float value = std::abs(lhs[i] - rhs[i]);
+        if(value > result.max_abs_degree) {
+            result.max_abs_degree = value;
+            result.joint_index = i;
+        }
+    }
+    return result;
+}
+
 float max_abs_difference(
     const std::array<float, kJointCount>& lhs,
     const std::array<float, kJointCount>& rhs) {
-    float result = 0.0F;
-    for(std::size_t i = 0; i < kJointCount; ++i) {
-        result = std::max(result, std::abs(lhs[i] - rhs[i]));
-    }
-    return result;
+    return summarize_difference(lhs, rhs).max_abs_degree;
 }
 
 /**
@@ -432,7 +448,9 @@ void TeaTeleop::print_config() const {
         << "主臂 Profile             = " << config_.leader_profile << "\n"
         << "RM65-B 地址              = " << config_.rm_ip << ":" << config_.rm_port << "\n"
         << "遥操作持续时间           = " << config_.teleop_duration_s << " s\n"
-        << "遥操作发送周期           = " << config_.teleop_period_ms << " ms\n"
+        << "遥操作发送周期           = " << config_.teleop_period_ms << " ms (~"
+        << std::fixed << std::setprecision(1)
+        << (1000.0 / static_cast<double>(config_.teleop_period_ms)) << " Hz)\n"
         << "慢速单周期最大变化       = " << config_.slow_max_step_degree << " deg\n"
         << "启动最大允许角差         = " << config_.max_start_error_degree << " deg\n"
         << "主臂归零容差             = " << config_.leader_home_tolerance_degree << " deg\n"
@@ -759,9 +777,16 @@ void TeaTeleop::teleop(TeleopMode mode) {
     leader.initialize(config_.leader_profile);
     ensure_rm_connected();
 
+    const double follower_target_hz =
+        1000.0 / static_cast<double>(config_.teleop_period_ms);
+    const double leader_target_hz = leader.control_frequency_hz();
+
     std::cout
-        << (mode == TeleopMode::Slow ? "慢速遥操作开始\n" : "遥操作开始\n")
-        << "主臂使用 COMPLIANT_DRAG + GRAVITY，Ctrl+C 结束\n";
+        << (mode == TeleopMode::Slow ? "慢速遥操作开始" : "遥操作开始")
+        << " | 从臂目标=" << std::fixed << std::setprecision(1)
+        << follower_target_hz << " Hz"
+        << " | 主臂目标=" << leader_target_hz << " Hz\n"
+        << "主臂模式: COMPLIANT_DRAG + GRAVITY，Ctrl+C 结束\n";
 
     clear_interrupt();
     bool rm_stop_ok = true;
@@ -797,14 +822,18 @@ void TeaTeleop::teleop(TeleopMode mode) {
         auto output = worker->latest();
         auto target = leader_joint_to_degree(output.joint_state.pos);
         auto slave_start = rm_.read_all_degree();
-        print_difference_line(target, slave_start);
+        const auto initial_difference = summarize_difference(target, slave_start);
+        std::cout
+            << "初始最大角差: " << std::fixed << std::setprecision(1)
+            << initial_difference.max_abs_degree << " deg (J"
+            << (initial_difference.joint_index + 1U) << ")\n";
         validate_start_error(target, slave_start);
 
         if(mode == TeleopMode::Full &&
-            max_abs_difference(target, slave_start) > kFullAlignToleranceDegree) {
+            initial_difference.max_abs_degree > kFullAlignToleranceDegree) {
             std::cout
-                << "从臂正在平滑对齐到当前主臂姿态"
-                << "，对齐期间可按 Ctrl+C 中断\n";
+                << "从臂对齐开始 | 最大角差=" << std::fixed << std::setprecision(1)
+                << initial_difference.max_abs_degree << " deg | Ctrl+C 中断\n";
 
             auto align_command = slave_start;
             auto align_next_tick = std::chrono::steady_clock::now();
@@ -856,14 +885,22 @@ void TeaTeleop::teleop(TeleopMode mode) {
             output = worker->latest();
             target = leader_joint_to_degree(output.joint_state.pos);
             slave_start = rm_.read_all_degree();
-            print_difference_line(target, slave_start);
+            const auto final_difference = summarize_difference(target, slave_start);
+            std::cout
+                << "从臂对齐完成 | 最大角差=" << std::fixed << std::setprecision(1)
+                << final_difference.max_abs_degree << " deg\n";
         }
 
         auto previous_command = slave_start;
         const auto start_time = std::chrono::steady_clock::now();
         auto last_status = start_time;
         auto next_tick = start_time;
+        const std::uint64_t leader_cycle_start = worker->cycle_count();
+        const std::uint64_t leader_overrun_start = worker->overrun_count();
+        std::uint64_t previous_send_count = 0U;
+        std::uint64_t previous_leader_count = leader_cycle_start;
         std::uint64_t teleop_cycle_count = 0U;
+        std::uint64_t teleop_overrun_count = 0U;
 
         while(!interrupted()) {
             const auto cycle_start = std::chrono::steady_clock::now();
@@ -885,14 +922,27 @@ void TeaTeleop::teleop(TeleopMode mode) {
             ++teleop_cycle_count;
 
             const auto after_work = std::chrono::steady_clock::now();
-            if(after_work - last_status >= std::chrono::seconds{ 1 }) {
+            if(after_work - last_status >= kStatusInterval) {
+                const double interval_s =
+                    std::chrono::duration<double>(after_work - last_status).count();
+                const double elapsed_s =
+                    std::chrono::duration<double>(after_work - start_time).count();
+                const std::uint64_t leader_count = worker->cycle_count();
+                const double follower_hz =
+                    static_cast<double>(teleop_cycle_count - previous_send_count) / interval_s;
+                const double leader_hz =
+                    static_cast<double>(leader_count - previous_leader_count) / interval_s;
+
                 std::cout
-                    << "遥操作运行中  发送周期=" << teleop_cycle_count
-                    << "  主臂周期=" << worker->cycle_count()
-                    << "  主臂超期=" << worker->overrun_count()
-                    << "  J1=" << std::fixed << std::setprecision(1)
-                    << target[0] << " deg"
-                    << "  J2重力前馈=" << output.model_feedforward[1] << " N.m\n";
+                    << "[遥操作 " << std::fixed << std::setprecision(1) << elapsed_s << " s] "
+                    << "从臂=" << follower_hz << " Hz"
+                    << " | 主臂=" << leader_hz << " Hz"
+                    << " | 超期 从臂=" << teleop_overrun_count
+                    << " 主臂=" << (worker->overrun_count() - leader_overrun_start)
+                    << "\n";
+
+                previous_send_count = teleop_cycle_count;
+                previous_leader_count = leader_count;
                 last_status = after_work;
             }
 
@@ -901,18 +951,34 @@ void TeaTeleop::teleop(TeleopMode mode) {
                 std::this_thread::sleep_until(next_tick);
             }
             else {
+                ++teleop_overrun_count;
                 next_tick = after_work;
             }
         }
+
+        const auto end_time = std::chrono::steady_clock::now();
+        const double elapsed_s =
+            std::chrono::duration<double>(end_time - start_time).count();
+        const std::uint64_t leader_cycle_total =
+            worker ? worker->cycle_count() - leader_cycle_start : 0U;
+        const std::uint64_t leader_overrun_total =
+            worker ? worker->overrun_count() - leader_overrun_start : 0U;
+        const double follower_average_hz = elapsed_s > 0.0 ?
+            static_cast<double>(teleop_cycle_count) / elapsed_s : 0.0;
+        const double leader_average_hz = elapsed_s > 0.0 ?
+            static_cast<double>(leader_cycle_total) / elapsed_s : 0.0;
 
         if(!safe_shutdown()) {
             throw std::runtime_error("遥操作结束时安全停止未完全成功");
         }
 
         std::cout
-            << "遥操作结束  发送周期=" << teleop_cycle_count
-            << "  主臂周期=" << (worker ? worker->cycle_count() : 0U)
-            << "  主臂超期=" << (worker ? worker->overrun_count() : 0U)
+            << "遥操作结束 | 时长=" << std::fixed << std::setprecision(1)
+            << elapsed_s << " s"
+            << " | 从臂平均=" << follower_average_hz << " Hz"
+            << " 超期=" << teleop_overrun_count
+            << " | 主臂平均=" << leader_average_hz << " Hz"
+            << " 超期=" << leader_overrun_total
             << "\n";
     }
     catch(...) {

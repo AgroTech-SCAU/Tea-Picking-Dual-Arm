@@ -13,7 +13,7 @@
 
 hiwonder:
   # 01 serial
-  serial_port: /dev/ttyACM0              # 左主臂 HX 总线串口，可改为 /dev/serial/by-id/... 提高设备名稳定性
+  serial_port: /dev/ttyACM1              # 左主臂 HX 总线串口，可改为 /dev/serial/by-id/... 提高设备名稳定性
   baudrate: 1000000                      # HX-10HM 总线波特率
   read_timeout_ms: 8                     # 单次实时状态读取超时 ms
   write_timeout_ms: 20                   # 写命令及状态 ACK 超时 ms

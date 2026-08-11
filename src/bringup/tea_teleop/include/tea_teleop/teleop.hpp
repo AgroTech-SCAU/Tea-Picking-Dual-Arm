@@ -25,8 +25,8 @@ struct TeleopConfig {
         1.0F,
     };
 
-    int teleop_duration_s{ -1 };               ///< -1 表示持续到 Ctrl+C
-    int teleop_period_ms{ 20 };                 ///< 从臂遥操作发送周期
+    int teleop_duration_s{ -1 };                ///< -1 表示持续到 Ctrl+C
+    int teleop_period_ms{ 8 };                  ///< 从臂遥操作发送周期，默认 8 ms
     float slow_max_step_degree{ 1.0F };         ///< 慢速遥操作单周期最大变化量
     float max_start_error_degree{ 30.0F };      ///< 主从启动最大允许角差
     float leader_home_tolerance_degree{ 2.0F }; ///< 主臂归零容差
