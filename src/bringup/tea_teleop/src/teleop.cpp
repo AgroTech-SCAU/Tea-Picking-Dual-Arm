@@ -118,10 +118,10 @@ void print_degree_array(
     }
 }
 
-void print_master_line(
+void print_leader_line(
     const std::array<std::uint16_t, kJointCount>& raw,
     const std::array<float, kJointCount>& degree) {
-    std::cout << "MASTER  ";
+    std::cout << "主臂    ";
 
     for(std::size_t i = 0; i < kJointCount; ++i) {
         std::cout
@@ -134,7 +134,7 @@ void print_master_line(
 }
 
 void print_slave_line(const std::array<float, kJointCount>& degree) {
-    std::cout << "SLAVE   ";
+    std::cout << "从臂    ";
 
     for(std::size_t i = 0; i < kJointCount; ++i) {
         std::cout
@@ -146,20 +146,20 @@ void print_slave_line(const std::array<float, kJointCount>& degree) {
 }
 
 void print_difference_line(
-    const std::array<float, kJointCount>& master,
+    const std::array<float, kJointCount>& leader,
     const std::array<float, kJointCount>& slave) {
-    std::cout << "DIFF    ";
+    std::cout << "差值    ";
 
     for(std::size_t i = 0; i < kJointCount; ++i) {
         std::cout
             << "J" << (i + 1)
             << "[" << std::fixed << std::setprecision(1)
-            << (master[i] - slave[i]) << "deg] ";
+            << (leader[i] - slave[i]) << "deg] ";
     }
     std::cout << "\n";
 }
 
-bool all_master_near_zero(
+bool all_leader_near_zero(
     const std::array<std::uint16_t, kJointCount>& raw,
     float tolerance_degree) {
     for(const auto value : raw) {
@@ -200,7 +200,7 @@ int TeaTeleop::run() {
                     return 0;
 
                 case 1:
-                    read_master_menu();
+                    read_leader_menu();
                     break;
 
                 case 2:
@@ -212,7 +212,7 @@ int TeaTeleop::run() {
                     break;
 
                 case 4:
-                    home_master_menu();
+                    home_leader_menu();
                     break;
 
                 case 5:
@@ -240,7 +240,7 @@ int TeaTeleop::run() {
                     break;
 
                 case 11:
-                    release_master_menu();
+                    release_leader_menu();
                     break;
 
                 default:
@@ -259,7 +259,7 @@ void TeaTeleop::print_main_menu() const {
         << "\n============================================================\n"
         << " Tea-Picking-Dual-Arm Teleoperation\n"
         << "============================================================\n"
-        << " Master : " << config_.serial_device << " @ " << Hx10hm::BAUDRATE << "\n"
+        << " Leader : " << config_.serial_device << " @ " << Hx10hm::BAUDRATE << "\n"
         << " Slave  : " << config_.rm_ip << ":" << config_.rm_port << "\n"
         << " Duration: "
         << (config_.teleop_duration_s < 0
@@ -307,9 +307,9 @@ void TeaTeleop::print_config() const {
         << "teleop_period_ms           = " << config_.teleop_period_ms << "\n"
         << "slow_max_step_degree       = " << config_.slow_max_step_degree << "\n"
         << "max_start_error_degree     = " << config_.max_start_error_degree << " (安全阈值)\n"
-        << "master_home_tolerance_deg  = " << config_.master_home_tolerance_degree << "\n"
-        << "master_home_speed          = " << config_.master_home_speed << " steps/s\n"
-        << "master_home_timeout_s      = " << config_.master_home_timeout_s << " s\n"
+        << "leader_home_tolerance_deg  = " << config_.leader_home_tolerance_degree << "\n"
+        << "leader_home_speed          = " << config_.leader_home_speed << " steps/s\n"
+        << "leader_home_timeout_s      = " << config_.leader_home_timeout_s << " s\n"
         << "slave_home_speed_percent   = " << config_.slave_home_speed_percent << "%\n"
         << "mapping_direction          = [";
 
@@ -427,7 +427,7 @@ void TeaTeleop::config_menu() {
             case 9: {
                 const float value = prompt_float("主臂自动归零到位容差 deg [0.5~5]: ");
                 if(value >= 0.5F && value <= 5.0F) {
-                    config_.master_home_tolerance_degree = value;
+                    config_.leader_home_tolerance_degree = value;
                 }
                 else {
                     std::cout << "范围无效，仅允许 0.5~5 deg\n";
@@ -438,7 +438,7 @@ void TeaTeleop::config_menu() {
             case 10: {
                 const int value = prompt_int("主臂自动归零速度 steps/s [20~500]: ");
                 if(value >= 20 && value <= 500) {
-                    config_.master_home_speed = static_cast<std::uint16_t>(value);
+                    config_.leader_home_speed = static_cast<std::uint16_t>(value);
                 }
                 else {
                     std::cout << "为保证归零安全，仅允许 20~500 steps/s\n";
@@ -449,7 +449,7 @@ void TeaTeleop::config_menu() {
             case 11: {
                 const int value = prompt_int("主臂自动归零超时 s [5~60]: ");
                 if(value >= 5 && value <= 60) {
-                    config_.master_home_timeout_s = value;
+                    config_.leader_home_timeout_s = value;
                 }
                 else {
                     std::cout << "范围无效，仅允许 5~60 s\n";
@@ -516,7 +516,7 @@ void TeaTeleop::mapping_direction_menu() {
     }
 }
 
-void TeaTeleop::read_master_menu() {
+void TeaTeleop::read_leader_menu() {
     std::cout
         << "\n1. 单次读取打印\n"
         << "2. 持续读取打印\n"
@@ -524,10 +524,10 @@ void TeaTeleop::read_master_menu() {
 
     const int option = prompt_int("选择主臂读取方式: ");
     if(option == 1) {
-        read_master(ReadMode::Once);
+        read_leader(ReadMode::Once);
     }
     else if(option == 2) {
-        read_master(ReadMode::Continuous);
+        read_leader(ReadMode::Continuous);
     }
 }
 
@@ -561,16 +561,16 @@ void TeaTeleop::read_compare_menu() {
     }
 }
 
-void TeaTeleop::read_master(ReadMode mode) {
+void TeaTeleop::read_leader(ReadMode mode) {
     SerialPort serial(config_.serial_device, make_serial_config());
-    Hx10hm master(serial);
+    Hx10hm leader(serial);
 
     clear_interrupt();
 
     do {
-        const auto raw = master.read_all_pos_raw();
-        const auto degree = master_raw_to_degree(raw);
-        print_master_line(raw, degree);
+        const auto raw = leader.read_all_pos_raw();
+        const auto degree = leader_raw_to_degree(raw);
+        print_leader_line(raw, degree);
 
         if(mode == ReadMode::Once) {
             break;
@@ -611,18 +611,18 @@ void TeaTeleop::read_slave(ReadMode mode) {
 
 void TeaTeleop::read_compare(ReadMode mode) {
     SerialPort serial(config_.serial_device, make_serial_config());
-    Hx10hm master(serial);
+    Hx10hm leader(serial);
     ensure_rm_connected();
     clear_interrupt();
 
     do {
-        const auto raw = master.read_all_pos_raw();
-        const auto master_degree = master_raw_to_degree(raw);
+        const auto raw = leader.read_all_pos_raw();
+        const auto leader_degree = leader_raw_to_degree(raw);
         const auto slave_degree = rm_.read_all_degree();
 
-        print_master_line(raw, master_degree);
+        print_leader_line(raw, leader_degree);
         print_slave_line(slave_degree);
-        print_difference_line(master_degree, slave_degree);
+        print_difference_line(leader_degree, slave_degree);
 
         if(mode == ReadMode::Once) {
             break;
@@ -639,10 +639,10 @@ void TeaTeleop::read_compare(ReadMode mode) {
     clear_interrupt();
 }
 
-void TeaTeleop::home_master_menu() {
+void TeaTeleop::home_leader_menu() {
     SerialPort serial(config_.serial_device, make_serial_config());
-    Hx10hm master(serial);
-    (void)home_master(master, true);
+    Hx10hm leader(serial);
+    (void)home_leader(leader, true);
 }
 
 void TeaTeleop::home_slave_menu() {
@@ -663,22 +663,22 @@ void TeaTeleop::home_both_menu() {
     }
 
     SerialPort serial(config_.serial_device, make_serial_config());
-    Hx10hm master(serial);
-    (void)home_master(master, false);
+    Hx10hm leader(serial);
+    (void)home_leader(leader, false);
 }
 
-void TeaTeleop::release_master_menu() {
+void TeaTeleop::release_leader_menu() {
     if(!confirm_token(
-        "RELEASE_MASTER",
-        "将向 HX-10HM ID1~6 逐个发送 Torque OFF，输入 RELEASE_MASTER: ")) {
+        "RELEASE_LEADER",
+        "将向 HX-10HM ID1~6 逐个发送 Torque OFF，输入 RELEASE_LEADER: ")) {
         std::cout << "已取消\n";
         return;
     }
 
     SerialPort serial(config_.serial_device, make_serial_config());
-    Hx10hm master(serial);
+    Hx10hm leader(serial);
 
-    if(release_master_torque(master)) {
+    if(release_leader_torque(leader)) {
         std::cout << "主臂 ID1~6 已全部确认卸力\n";
     }
     else {
@@ -688,24 +688,24 @@ void TeaTeleop::release_master_menu() {
     }
 }
 
-bool TeaTeleop::home_master(Hx10hm& master, bool require_confirmation) {
+bool TeaTeleop::home_leader(Hx10hm& leader, bool require_confirmation) {
     if(require_confirmation &&
         !confirm_token(
-            "HOME_MASTER",
-            "主臂 HX-10HM 将上力并以低速自动回到 raw=2048，确认无机械干涉后输入 HOME_MASTER: ")) {
+            "HOME_LEADER",
+            "主臂 HX-10HM 将上力并以低速自动回到 raw=2048，确认无机械干涉后输入 HOME_LEADER: ")) {
         std::cout << "已取消\n";
         return false;
     }
 
-    const auto before_raw = master.read_all_pos_raw();
-    print_master_line(before_raw, master_raw_to_degree(before_raw));
+    const auto before_raw = leader.read_all_pos_raw();
+    print_leader_line(before_raw, leader_raw_to_degree(before_raw));
 
     std::cout
         << "主臂自动归零开始\n"
         << "- 目标: ID1~6 raw=2048\n"
-        << "- 速度: " << config_.master_home_speed << " steps/s\n"
-        << "- 到位容差: +/- " << config_.master_home_tolerance_degree << " deg\n"
-        << "- 超时: " << config_.master_home_timeout_s << " s\n"
+        << "- 速度: " << config_.leader_home_speed << " steps/s\n"
+        << "- 到位容差: +/- " << config_.leader_home_tolerance_degree << " deg\n"
+        << "- 超时: " << config_.leader_home_timeout_s << " s\n"
         << "- Ctrl+C 会中断归零并立即尝试逐个 Torque OFF\n";
 
     clear_interrupt();
@@ -716,7 +716,7 @@ bool TeaTeleop::home_master(Hx10hm& master, bool require_confirmation) {
         // FF FF ID 02 ERROR CHECKSUM
         // Hx10hm::set_all_torque() 会逐个等待并校验这个 ACK
         torque_may_be_enabled = true;
-        master.set_all_torque(true);
+        leader.set_all_torque(true);
 
         // 给舵机一个很短的上力稳定时间，再一次性同步下发六关节目标
         std::this_thread::sleep_for(std::chrono::milliseconds{ 30 });
@@ -726,26 +726,26 @@ bool TeaTeleop::home_master(Hx10hm& master, bool require_confirmation) {
 
         // SYNC WRITE 使用广播 ID，无状态包返回
         // 随后持续 READ DATA 验证真实位置，而不是把“发送成功”当作“已经到位”
-        master.sync_write_all_pos_raw(
+        leader.sync_write_all_pos_raw(
             zero_raw,
-            config_.master_home_speed,
+            config_.leader_home_speed,
             0);
 
         const auto deadline =
             std::chrono::steady_clock::now() +
-            std::chrono::seconds{ config_.master_home_timeout_s };
+            std::chrono::seconds{ config_.leader_home_timeout_s };
 
         std::size_t transient_read_failures = 0;
 
         while(!interrupted()) {
             try {
-                const auto raw = master.read_all_pos_raw();
+                const auto raw = leader.read_all_pos_raw();
                 transient_read_failures = 0;
 
-                print_master_line(raw, master_raw_to_degree(raw));
+                print_leader_line(raw, leader_raw_to_degree(raw));
 
-                if(all_master_near_zero(raw, config_.master_home_tolerance_degree)) {
-                    const bool released = release_master_torque(master);
+                if(all_leader_near_zero(raw, config_.leader_home_tolerance_degree)) {
+                    const bool released = release_leader_torque(leader);
                     torque_may_be_enabled = false;
 
                     if(!released) {
@@ -777,7 +777,7 @@ bool TeaTeleop::home_master(Hx10hm& master, bool require_confirmation) {
             std::this_thread::sleep_for(std::chrono::milliseconds{ 100 });
         }
 
-        const bool released = release_master_torque(master);
+        const bool released = release_leader_torque(leader);
         torque_may_be_enabled = false;
         clear_interrupt();
 
@@ -791,7 +791,7 @@ bool TeaTeleop::home_master(Hx10hm& master, bool require_confirmation) {
     }
     catch(...) {
         if(torque_may_be_enabled) {
-            const bool released = release_master_torque(master);
+            const bool released = release_leader_torque(leader);
             if(!released) {
                 std::cerr
                     << "[CRITICAL] 主臂归零异常后无法确认全部 Torque OFF\n"
@@ -804,7 +804,7 @@ bool TeaTeleop::home_master(Hx10hm& master, bool require_confirmation) {
     }
 }
 
-bool TeaTeleop::release_master_torque(Hx10hm& master) noexcept {
+bool TeaTeleop::release_leader_torque(Hx10hm& leader) noexcept {
     bool all_released = true;
 
     for(std::uint8_t id = 1; id <= Hx10hm::JOINT_COUNT; ++id) {
@@ -813,7 +813,7 @@ bool TeaTeleop::release_master_torque(Hx10hm& master) noexcept {
         // 卸力是异常恢复路径，单个 ID 最多尝试两次
         for(int attempt = 1; attempt <= 2 && !released; ++attempt) {
             try {
-                master.set_torque(id, false);
+                leader.set_torque(id, false);
                 released = true;
             }
             catch(const std::exception& e) {
@@ -860,7 +860,7 @@ bool TeaTeleop::home_slave(bool require_confirmation) {
 
 void TeaTeleop::teleop(TeleopMode mode) {
     SerialPort serial(config_.serial_device, make_serial_config());
-    Hx10hm master(serial);
+    Hx10hm leader(serial);
     ensure_rm_connected();
 
     std::cout
@@ -884,16 +884,16 @@ void TeaTeleop::teleop(TeleopMode mode) {
         if(!home_slave(false)) {
             return;
         }
-        if(!home_master(master, false)) {
+        if(!home_leader(leader, false)) {
             return;
         }
     }
 
-    auto first_raw = master.read_all_pos_raw();
-    auto first_target = master_raw_to_degree(first_raw);
+    auto first_raw = leader.read_all_pos_raw();
+    auto first_target = leader_raw_to_degree(first_raw);
     auto slave_start = rm_.read_all_degree();
 
-    print_master_line(first_raw, first_target);
+    print_leader_line(first_raw, first_target);
     print_slave_line(slave_start);
     print_difference_line(first_target, slave_start);
 
@@ -938,8 +938,8 @@ void TeaTeleop::teleop(TeleopMode mode) {
     }
 
     // 用户确认后重新读取，避免确认过程中主臂姿态已经变化
-    first_raw = master.read_all_pos_raw();
-    first_target = master_raw_to_degree(first_raw);
+    first_raw = leader.read_all_pos_raw();
+    first_target = leader_raw_to_degree(first_raw);
     slave_start = rm_.read_all_degree();
     validate_start_error(first_target, slave_start);
 
@@ -972,8 +972,8 @@ void TeaTeleop::teleop(TeleopMode mode) {
                 break;
             }
 
-            const auto raw = master.read_all_pos_raw();
-            const auto target = master_raw_to_degree(raw);
+            const auto raw = leader.read_all_pos_raw();
+            const auto target = leader_raw_to_degree(raw);
 
             const auto command =
                 mode == TeleopMode::Slow
@@ -1063,7 +1063,7 @@ void TeaTeleop::ensure_rm_connected() {
     }
 }
 
-std::array<float, kJointCount> TeaTeleop::master_raw_to_degree(
+std::array<float, kJointCount> TeaTeleop::leader_raw_to_degree(
     const std::array<std::uint16_t, kJointCount>& raw) const {
     std::array<float, kJointCount> degree{};
 
@@ -1092,13 +1092,13 @@ std::array<float, kJointCount> TeaTeleop::limit_slow_command(
 }
 
 void TeaTeleop::validate_start_error(
-    const std::array<float, kJointCount>& master_degree,
+    const std::array<float, kJointCount>& leader_degree,
     const std::array<float, kJointCount>& slave_degree) const {
     std::ostringstream error;
     bool failed = false;
 
     for(std::size_t i = 0; i < kJointCount; ++i) {
-        const float diff = std::abs(master_degree[i] - slave_degree[i]);
+        const float diff = std::abs(leader_degree[i] - slave_degree[i]);
         if(diff > config_.max_start_error_degree) {
             failed = true;
             error

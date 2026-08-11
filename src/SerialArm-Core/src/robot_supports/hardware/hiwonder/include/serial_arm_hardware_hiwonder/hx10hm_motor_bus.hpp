@@ -55,6 +55,8 @@ struct HiwonderBusCfg {
     std::chrono::milliseconds write_timeout{ 20 };  ///< 写入及 ACK 超时
     std::chrono::milliseconds feedback_timeout{ 50 }; ///< 状态新鲜度上限
     std::size_t startup_read_cycles{ 3 };            ///< 激活后状态确认次数
+    std::size_t read_retry_count{ 1 };               ///< 实时状态 SYNC READ 瞬态失败重试次数
+    std::size_t current_read_divider{ 10 };          ///< 电流诊断读取分频，100 Hz 控制时 10 表示约 10 Hz
     bool restore_position_mode_on_deactivate{ false }; ///< 停用时是否恢复位置模式
     HiwonderVelocityEncoding velocity_encoding{ HiwonderVelocityEncoding::Bit15SignMagnitude }; ///< 速度编码
     std::string torque_feedback_mode{ "unavailable_zero" }; ///< 未标定力矩反馈策略
@@ -205,7 +207,7 @@ public:
      * @return 关节位置，rad
      */
     static double raw_position_to_rad(
-        std::uint16_t raw,
+        std::int16_t raw,
         std::uint16_t raw_zero,
         int direction) noexcept;
 
@@ -301,6 +303,8 @@ private:
     std::vector<protocol::hiwonder_bus_servo::RawState> raw_states_; ///< 最近原始反馈
     std::vector<std::uint8_t> online_;                       ///< 执行器在线状态
     std::vector<std::uint8_t> enabled_;                      ///< 执行器使能状态
+    std::vector<std::uint16_t> current_cache_ma_;            ///< 低频电流诊断缓存，控制环不依赖该值
+    std::size_t read_cycle_count_{ 0 };                      ///< read() 调用计数，用于诊断分频
     TimePoint last_feedback_time_{};                         ///< 最近六轴同步反馈时间
     bool configured_{ false };                               ///< 是否已配置
     bool connected_{ false };                                ///< 是否已连接

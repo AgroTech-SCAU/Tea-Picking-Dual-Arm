@@ -52,13 +52,13 @@ struct TeleopConfig {
     float max_start_error_degree{ 30.0F };
 
     /** 主臂自动归零到位容差 */
-    float master_home_tolerance_degree{ 2.0F };
+    float leader_home_tolerance_degree{ 2.0F };
 
     /** 主臂自动归零速度，单位 steps/s */
-    std::uint16_t master_home_speed{ 100 };
+    std::uint16_t leader_home_speed{ 100 };
 
     /** 主臂自动归零最长等待时间 */
-    int master_home_timeout_s{ 30 };
+    int leader_home_timeout_s{ 30 };
 
     /** RM65-B 规划归零/全速模式启动前对齐的速度百分比 */
     int slave_home_speed_percent{ 10 };
@@ -98,20 +98,20 @@ private:
     void mapping_direction_menu();
 
     /** 主从臂读取 */
-    void read_master_menu();
+    void read_leader_menu();
     void read_slave_menu();
     void read_compare_menu();
-    void read_master(ReadMode mode);
+    void read_leader(ReadMode mode);
     void read_slave(ReadMode mode);
     void read_compare(ReadMode mode);
 
-    void home_master_menu();
+    void home_leader_menu();
     void home_slave_menu();
     void home_both_menu();
-    void release_master_menu();
-    bool home_master(Hx10hm& master, bool require_confirmation);
+    void release_leader_menu();
+    bool home_leader(Hx10hm& leader, bool require_confirmation);
     bool home_slave(bool require_confirmation);
-    bool release_master_torque(Hx10hm& master) noexcept;
+    bool release_leader_torque(Hx10hm& leader) noexcept;
 
     /** 遥操作 */
     void teleop(TeleopMode mode);
@@ -121,13 +121,13 @@ private:
 
     /** 通信与映射工具 */
     void ensure_rm_connected();
-    [[nodiscard]] std::array<float, 6> master_raw_to_degree(
+    [[nodiscard]] std::array<float, 6> leader_raw_to_degree(
         const std::array<std::uint16_t, 6>& raw) const;
     [[nodiscard]] std::array<float, 6> limit_slow_command(
         const std::array<float, 6>& target,
         const std::array<float, 6>& previous) const;
     void validate_start_error(
-        const std::array<float, 6>& master_degree,
+        const std::array<float, 6>& leader_degree,
         const std::array<float, 6>& slave_degree) const;
 
     /** 运行时配置 */

@@ -78,7 +78,7 @@ struct PwmCommand {
  */
 struct RawState {
     std::uint8_t id{ 0 };                  ///< 舵机 ID
-    std::uint16_t position_raw{ 0 };       ///< 0x38 原始位置步数
+    std::int16_t position_raw{ 0 };        ///< 0x38 有符号绝对位置步数
     std::uint16_t velocity_raw{ 0 };       ///< 0x3A 原始速度字，方向编码未解释
     std::int16_t load_raw{ 0 };            ///< 0x3C 原始负载，0.1% 且 BIT10 为方向位
     std::uint8_t voltage_raw{ 0 };         ///< 0x3E 原始电压，0.1 V
@@ -153,7 +153,17 @@ tl::expected<Buffer, Err> encode_sync_write_packet(
 tl::expected<StatusPacket, Err> parse_status_packet(const Buffer& packet);
 
 /**
- * @brief 解码 HX-10HM 原始状态块
+ * @brief 解码 HX-10HM 0x38 起始的 10 字节实时状态块
+ * @param state_packet 从 0x38 读取 10 字节的状态包
+ * @param current_raw_ma 最近一次电流诊断值，单位 mA
+ * @return 成功时返回原始状态，否则返回错误码
+ */
+tl::expected<RawState, Err> decode_state_block(
+    const StatusPacket& state_packet,
+    std::uint16_t current_raw_ma = 0U);
+
+/**
+ * @brief 解码 HX-10HM 原始状态块与独立电流包
  * @param state_packet 从 0x38 读取 10 字节的状态包
  * @param current_packet 从 0x45 读取 2 字节的电流包
  * @return 成功时返回原始状态，否则返回错误码
@@ -274,9 +284,9 @@ public:
      * @brief 读取原始位置
      * @param id 舵机 ID
      * @param timeout 应答超时
-     * @return 0x38 的原始 16 位值
+     * @return 0x38 的有符号绝对位置步数
      */
-    tl::expected<std::uint16_t, Err> read_position(
+    tl::expected<std::int16_t, Err> read_position(
         std::uint8_t id,
         std::chrono::milliseconds timeout);
 
@@ -321,7 +331,27 @@ public:
         std::chrono::milliseconds timeout);
 
     /**
-     * @brief 使用两次 SYNC READ 读取多舵机原始状态与电流
+     * @brief 使用一次 SYNC READ 读取控制循环所需的多舵机状态块
+     * @param ids 舵机 ID 顺序
+     * @param timeout 每个应答包超时
+     * @return 成功时返回按 ids 排列的原始状态，电流字段保持 0
+     */
+    tl::expected<std::vector<RawState>, Err> sync_read_state_blocks(
+        const std::vector<std::uint8_t>& ids,
+        std::chrono::milliseconds timeout);
+
+    /**
+     * @brief 使用一次 SYNC READ 读取多舵机电流诊断值
+     * @param ids 舵机 ID 顺序
+     * @param timeout 每个应答包超时
+     * @return 成功时返回按 ids 排列的电流值，单位 mA
+     */
+    tl::expected<std::vector<std::uint16_t>, Err> sync_read_currents(
+        const std::vector<std::uint8_t>& ids,
+        std::chrono::milliseconds timeout);
+
+    /**
+     * @brief 兼容接口：连续执行状态块与电流两次 SYNC READ
      * @param ids 舵机 ID 顺序
      * @param timeout 每个应答包超时
      * @return 成功时返回按 ids 排列的原始状态

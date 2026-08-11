@@ -556,12 +556,14 @@ private:
                 const auto now = Robot::Clock::now();
                 if(now > next_wakeup) next_wakeup = now;
                 if(robot_.get_state() == RobotState::ACTIVE) run_control_cycle(now);
-                else if(robot_.get_state() == RobotState::FAULT && robot_.is_fault_holding()) {
+                else if(robot_.get_state() == RobotState::FAULT && robot_.is_fault_holding() &&
+                    !fault_hold_refresh_failed_) {
                     const auto hold_result = robot_.maintain_fault_hold();
                     if(!hold_result) {
+                        fault_hold_refresh_failed_ = true;
                         std::cout << "\n[故障保持刷新失败，硬件已降级失能]\n";
                         print_fault(hold_result.error());
-                        std::cout << "请输入菜单编号继续\n";
+                        std::cout << "[提示] 已停止重复刷新故障保持，避免同一故障持续刷屏；请使用 clear_fault() 或立即失能处理\n";
                     }
                 }
             }
@@ -671,12 +673,23 @@ private:
         std::cout << " SerialArm Terminal Main\n";
         std::cout << " backend: " << (cfg_.runtime.write_enabled ? hardware_plugin_ : "offline") << '\n';
         std::cout << " config : " << config_path_ << '\n';
+        std::cout << " mode   : " << (cfg_.runtime.write_enabled ? "真机" : "离线") << '\n';
+        std::cout << " 前馈   : " << to_string(cfg_.runtime.model_feedforward_mode) << '\n';
+        std::cout << " 重力比例: ";
+        for(std::size_t i = 0; i < cfg_.dynamics.gravity_scale.size(); ++i) {
+            if(i != 0U) std::cout << ' ';
+            std::cout << cfg_.dynamics.gravity_scale[i];
+        }
+        std::cout << '\n';
         std::cout << "==============================================\n";
         if(cfg_.runtime.write_enabled) {
-            std::cout << "[危险] 当前终端使用真机运行前必须确认机械臂已支撑、零位、方向、限位和电机型号正确\n";
+            std::cout << "[真机] 当前配置会连接并控制真实执行器，activate() 前必须确认机械臂已可靠支撑\n";
+            if(cfg_.runtime.model_feedforward_mode == ModelFeedforwardMode::NONE && is_zero_vector(cfg_.dynamics.gravity_scale)) {
+                std::cout << "[安全初始状态] 模型前馈为 NONE，重力补偿比例全为 0\n";
+            }
         }
         else {
-            std::cout << "[离线] runtime.write_enabled=false，不连接串口、不使能电机、不写入真实硬件\n";
+            std::cout << "[离线] 不连接串口、不使能电机、不写入真实硬件\n";
         }
     }
 
@@ -752,6 +765,7 @@ private:
         }
         last_output_.reset();
         background_fault_reported_ = false;
+        fault_hold_refresh_failed_ = false;
         std::cout << "activate() 成功，后台 cycle() 自动运行\n";
         if(robot_.get_model_feedforward_mode() == ModelFeedforwardMode::GRAVITY && is_zero_vector(dynamics_.get_gravity_scale())) {
             std::cout << "[提示] 当前已选择 GRAVITY，但 gravity_scale 全为 0，实际重力补偿力矩仍为 0\n";
@@ -899,6 +913,7 @@ private:
         }
         last_output_.reset();
         background_fault_reported_ = false;
+        fault_hold_refresh_failed_ = false;
         std::cout << "已立即失能，重力负载机械臂可能下落\n";
     }
 
@@ -913,6 +928,7 @@ private:
         }
         last_output_.reset();
         background_fault_reported_ = false;
+        fault_hold_refresh_failed_ = false;
         std::cout << "clear_fault() 成功，已清除外部命令并进入 ACTIVE + RIGID_HOLD\n";
     }
 
@@ -1433,6 +1449,7 @@ private:
     std::optional<JointCtrlCmd> latched_full_cmd_;
     std::optional<RobotCycleOutput> last_output_;
     bool background_fault_reported_{ false };
+    bool fault_hold_refresh_failed_{ false };
     std::optional<DynamicsErr> last_dynamics_err_;
 };
 

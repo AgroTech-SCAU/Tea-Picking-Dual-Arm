@@ -111,6 +111,8 @@ SerialPort
 | Python Binding | 已实现 |
 | C++ Terminal | 已实现 |
 | Damiao Backend | Reference backend |
+| Tea Leader Right | 右主臂 Robot Support；HX-10HM Software MIT over PWM Open-Loop；关节轴方向已完成校准；重力补偿尚未启用 |
+| Tea Leader Right GC Test | 右主操作臂重力补偿真机测试 Profile；默认前馈关闭、重力比例为 0、仅保留低阻尼 |
 | ros2_control | 可选 Adapter |
 | MoveIt 2 | 可选 |
 | LeRobot | Planned |
@@ -332,3 +334,13 @@ Hardware Backend 通过 `MotorBus` 接收统一的 `position / velocity / torque
 ## License
 
 以仓库当前 [LICENSE](LICENSE) 为准
+
+### 茶叶采摘右主操作臂
+
+右主操作臂使用统一 Robot Profile：
+
+```bash
+serial_arm_terminal --robot-profile tea_leader_right
+```
+
+`tea_leader_right` 已选择 `GRAVITY` 模型前馈，但默认 `gravity_scale=[0,0,0,0,0,0]`，启动后不会自动输出重力补偿力矩；需要在确认真机状态后再逐轴调整比例

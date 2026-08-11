@@ -75,6 +75,13 @@ std::uint16_t decode_u16_le(const Buffer& data, std::size_t offset) noexcept {
 }
 
 /**
+ * @brief 按低字节在前解码 16 位有符号数
+ */
+std::int16_t decode_i16_le(const Buffer& data, std::size_t offset) noexcept {
+    return static_cast<std::int16_t>(decode_u16_le(data, offset));
+}
+
+/**
  * @brief 按 BIT10 方向位解码符号幅值
  */
 std::int16_t decode_signed_magnitude_10(std::uint16_t wire) noexcept {
@@ -234,7 +241,31 @@ tl::expected<StatusPacket, Err> parse_status_packet(const Buffer& packet) {
 }
 
 /**
- * @brief 解码 HX-10HM 原始状态块
+ * @brief 解码 HX-10HM 0x38 起始的 10 字节实时状态块
+ */
+tl::expected<RawState, Err> decode_state_block(
+    const StatusPacket& state_packet,
+    std::uint16_t current_raw_ma) {
+    if(state_packet.error != 0U) return tl::make_unexpected(Err::DEVICE_ERROR);
+    if(state_packet.parameters.size() != STATE_BLOCK_SIZE) {
+        return tl::make_unexpected(Err::MALFORMED_PACKET);
+    }
+
+    RawState state;
+    state.id = state_packet.id;
+    state.position_raw = decode_i16_le(state_packet.parameters, 0U);
+    state.velocity_raw = decode_u16_le(state_packet.parameters, 2U);
+    state.load_raw = decode_signed_magnitude_10(decode_u16_le(state_packet.parameters, 4U));
+    state.voltage_raw = state_packet.parameters[6];
+    state.temperature_raw = state_packet.parameters[7];
+    state.registered = state_packet.parameters[8];
+    state.fault = state_packet.parameters[9];
+    state.current_raw_ma = current_raw_ma;
+    return state;
+}
+
+/**
+ * @brief 解码 HX-10HM 原始状态块与独立电流包
  */
 tl::expected<RawState, Err> decode_raw_state(
     const StatusPacket& state_packet,
@@ -242,24 +273,11 @@ tl::expected<RawState, Err> decode_raw_state(
     if(state_packet.id != current_packet.id) {
         return tl::make_unexpected(Err::UNEXPECTED_ID);
     }
-    if(state_packet.error != 0U || current_packet.error != 0U) {
-        return tl::make_unexpected(Err::DEVICE_ERROR);
-    }
-    if(state_packet.parameters.size() != STATE_BLOCK_SIZE || current_packet.parameters.size() != 2U) {
+    if(current_packet.error != 0U) return tl::make_unexpected(Err::DEVICE_ERROR);
+    if(current_packet.parameters.size() != 2U) {
         return tl::make_unexpected(Err::MALFORMED_PACKET);
     }
-
-    RawState state;
-    state.id = state_packet.id;
-    state.position_raw = decode_u16_le(state_packet.parameters, 0U);
-    state.velocity_raw = decode_u16_le(state_packet.parameters, 2U);
-    state.load_raw = decode_signed_magnitude_10(decode_u16_le(state_packet.parameters, 4U));
-    state.voltage_raw = state_packet.parameters[6];
-    state.temperature_raw = state_packet.parameters[7];
-    state.registered = state_packet.parameters[8];
-    state.fault = state_packet.parameters[9];
-    state.current_raw_ma = decode_u16_le(current_packet.parameters, 0U);
-    return state;
+    return decode_state_block(state_packet, decode_u16_le(current_packet.parameters, 0U));
 }
 
 /**
@@ -415,12 +433,12 @@ tl::expected<void, Err> HiwonderBusServo::sync_write_pwm(const std::vector<PwmCo
 /**
  * @brief 读取原始位置
  */
-tl::expected<std::uint16_t, Err> HiwonderBusServo::read_position(
+tl::expected<std::int16_t, Err> HiwonderBusServo::read_position(
     std::uint8_t id,
     std::chrono::milliseconds timeout) {
     const auto data = read_register(id, PRESENT_POSITION_ADDR, 2U, timeout);
     if(!data) return tl::make_unexpected(data.error());
-    return decode_u16_le(*data, 0U);
+    return decode_i16_le(*data, 0U);
 }
 
 /**
@@ -468,23 +486,57 @@ tl::expected<std::uint16_t, Err> HiwonderBusServo::read_current(
 }
 
 /**
- * @brief 使用两次 SYNC READ 读取多舵机原始状态与电流
+ * @brief 使用一次 SYNC READ 读取控制循环所需的多舵机状态块
  */
-tl::expected<std::vector<RawState>, Err> HiwonderBusServo::sync_read_states(
+tl::expected<std::vector<RawState>, Err> HiwonderBusServo::sync_read_state_blocks(
     const std::vector<std::uint8_t>& ids,
     std::chrono::milliseconds timeout) {
     const auto states = sync_read(ids, PRESENT_POSITION_ADDR, STATE_BLOCK_SIZE, timeout);
     if(!states) return tl::make_unexpected(states.error());
-    const auto currents = sync_read(ids, PRESENT_CURRENT_ADDR, 2U, timeout);
-    if(!currents) return tl::make_unexpected(currents.error());
 
     std::vector<RawState> result;
     result.reserve(ids.size());
-    for(std::size_t i = 0; i < ids.size(); ++i) {
-        const auto state = decode_raw_state((*states)[i], (*currents)[i]);
+    for(const auto& packet : *states) {
+        const auto state = decode_state_block(packet);
         if(!state) return tl::make_unexpected(state.error());
         result.push_back(*state);
     }
+    return result;
+}
+
+/**
+ * @brief 使用一次 SYNC READ 读取多舵机电流诊断值
+ */
+tl::expected<std::vector<std::uint16_t>, Err> HiwonderBusServo::sync_read_currents(
+    const std::vector<std::uint8_t>& ids,
+    std::chrono::milliseconds timeout) {
+    const auto currents = sync_read(ids, PRESENT_CURRENT_ADDR, 2U, timeout);
+    if(!currents) return tl::make_unexpected(currents.error());
+
+    std::vector<std::uint16_t> result;
+    result.reserve(ids.size());
+    for(const auto& packet : *currents) {
+        if(packet.error != 0U) return tl::make_unexpected(Err::DEVICE_ERROR);
+        if(packet.parameters.size() != 2U) return tl::make_unexpected(Err::MALFORMED_PACKET);
+        result.push_back(decode_u16_le(packet.parameters, 0U));
+    }
+    return result;
+}
+
+/**
+ * @brief 兼容接口：连续执行状态块与电流两次 SYNC READ
+ */
+tl::expected<std::vector<RawState>, Err> HiwonderBusServo::sync_read_states(
+    const std::vector<std::uint8_t>& ids,
+    std::chrono::milliseconds timeout) {
+    const auto states = sync_read_state_blocks(ids, timeout);
+    if(!states) return tl::make_unexpected(states.error());
+    const auto currents = sync_read_currents(ids, timeout);
+    if(!currents) return tl::make_unexpected(currents.error());
+    if(states->size() != currents->size()) return tl::make_unexpected(Err::MALFORMED_PACKET);
+
+    auto result = *states;
+    for(std::size_t i = 0; i < result.size(); ++i) result[i].current_raw_ma = (*currents)[i];
     return result;
 }
 

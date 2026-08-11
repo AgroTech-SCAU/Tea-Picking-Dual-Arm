@@ -39,3 +39,19 @@ profiles:
       config: config/ros2_controllers.yaml # controller_manager 配置
     moveit:
       package: dm_arm_with_gripper  # 当前 Profile 使用的 MoveIt 配置包
+
+  tea_leader_right:
+    core:
+      package: tea_leader_description
+      config: config/core/right.yaml
+    hardware:
+      plugin: serial_arm_hardware_hiwonder
+      config_package: tea_leader_description
+      config: config/hardware/right.yaml
+    description:
+      package: tea_leader_description
+      urdf: model/right/urdf/tea_leader_right.urdf
+      ros2_control_xacro: model/right/urdf/tea_leader_right.ros2_control.xacro
+    controllers:
+      package: tea_leader_description
+      config: config/ros2_controllers_right.yaml

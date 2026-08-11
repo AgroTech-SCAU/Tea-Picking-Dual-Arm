@@ -1,0 +1,135 @@
+# Tea Leader Right Config
+#
+# 目录
+# 01 model            URDF、动力学与重力补偿
+# 02 calibration      关节方向、比例与零位
+# 03 control          运行时与阻抗参数
+# 04 safety_policy    运行安全策略与执行器能力收窄
+# 05 shutdown         主操作臂停机策略
+#
+# 当前状态
+# - 右主操作臂六轴关节方向已完成 RViz 与实物校准
+# - Pinocchio 重力模型已完成离线计算与初步真机验证
+# - 默认选择 GRAVITY，但 gravity_scale 全为 0，因此启动时不会输出重力补偿力矩
+# - J2 在 q2≈1.57 rad、其余轴为 0 时模型重力力矩约 0.726629 N·m
+# - Hardware / URDF / Safety 的软件力矩上限统一提高到 0.80 N·m
+# - 0.80 N·m 仅是软件/峰值上限，不代表 HX-10HM 适合长期连续输出该力矩
+
+# 01 model
+model:
+  urdf_path: ../../model/right/urdf/tea_leader_right.urdf                         # 路径相对当前 YAML
+  joint_names: [right_joint1, right_joint2, right_joint3, right_joint4, right_joint5, right_joint6]  # 受控关节顺序
+  base_frame: base_link                                                            # 动力学基坐标系
+  tool_frame: right_link6                                                          # 动力学末端坐标系
+  gravity: [0.0, 0.0, -9.81]                                                       # 世界坐标系重力加速度
+  gravity_scale: [0.3, 0.3, 0.3, 0.3, 0.3, 0.3]                                    # 默认 0；人工逐轴调大后才产生补偿
+
+# 02 calibration
+calibration:
+  joints:
+    right_joint1: {direction: 1.0, pos_ratio: 1.0, tor_ratio: 1.0, joint_zero_offset: 0.0, actuator_zero_offset: 0.0}
+    right_joint2: {direction: 1.0, pos_ratio: 1.0, tor_ratio: 1.0, joint_zero_offset: 0.0, actuator_zero_offset: 0.0}
+    right_joint3: {direction: 1.0, pos_ratio: 1.0, tor_ratio: 1.0, joint_zero_offset: 0.0, actuator_zero_offset: 0.0}
+    right_joint4: {direction: 1.0, pos_ratio: 1.0, tor_ratio: 1.0, joint_zero_offset: 0.0, actuator_zero_offset: 0.0}
+    right_joint5: {direction: 1.0, pos_ratio: 1.0, tor_ratio: 1.0, joint_zero_offset: 0.0, actuator_zero_offset: 0.0}
+    right_joint6: {direction: 1.0, pos_ratio: 1.0, tor_ratio: 1.0, joint_zero_offset: 0.0, actuator_zero_offset: 0.0}
+
+# 03 control
+control:
+  runtime:
+    ctrl_frequency_hz: 100.0                       # Hiwonder 六轴控制周期，已按 100 Hz 验证
+    joint_acc_filter_alpha: 0.2                    # 关节加速度低通滤波系数
+    write_enabled: true                            # tea_leader_right 为真机 Profile
+    model_feedforward_mode: GRAVITY                # 默认选择重力前馈；scale=0 时实际输出仍为 0
+    tracking_impedance_mode: COMPLIANT_TRACKING    # 跟踪命令默认采用柔性跟踪
+  controller:
+    allow_full_cmd: false                          # 默认禁止外部完整 MIT 命令直接覆盖
+    # 刚性保持
+    rigid_hold:
+      kp: {right_joint1: 0.5, right_joint2: 0.5, right_joint3: 0.5, right_joint4: 0.5, right_joint5: 0.5, right_joint6: 0.5}
+      kd: {right_joint1: 0.05, right_joint2: 0.05, right_joint3: 0.05, right_joint4: 0.05, right_joint5: 0.05, right_joint6: 0.05}
+    # 刚性跟踪
+    rigid_tracking:
+      kp: {right_joint1: 0.5, right_joint2: 0.5, right_joint3: 0.5, right_joint4: 0.5, right_joint5: 0.5, right_joint6: 0.5}
+      kd: {right_joint1: 0.05, right_joint2: 0.05, right_joint3: 0.05, right_joint4: 0.05, right_joint5: 0.05, right_joint6: 0.05}
+    # 柔性保持
+    compliant_hold:
+      kp: {right_joint1: 0.1, right_joint2: 0.1, right_joint3: 0.1, right_joint4: 0.1, right_joint5: 0.1, right_joint6: 0.1}
+      kd: {right_joint1: 0.01, right_joint2: 0.01, right_joint3: 0.01, right_joint4: 0.01, right_joint5: 0.01, right_joint6: 0.01}
+    # 柔性拖拽；当前主操作臂重力补偿主要使用该模式
+    compliant_drag:
+      kp: {right_joint1: 0.0, right_joint2: 0.0, right_joint3: 0.0, right_joint4: 0.0, right_joint5: 0.0, right_joint6: 0.0}
+      kd: {right_joint1: 0.01, right_joint2: 0.01, right_joint3: 0.005, right_joint4: 0.01, right_joint5: 0.0, right_joint6: 0.0}
+    # 柔性跟踪
+    compliant_tracking:
+      kp: {right_joint1: 0.1, right_joint2: 0.1, right_joint3: 0.1, right_joint4: 0.1, right_joint5: 0.1, right_joint6: 0.1}
+      kd: {right_joint1: 0.01, right_joint2: 0.01, right_joint3: 0.01, right_joint4: 0.01, right_joint5: 0.01, right_joint6: 0.01}
+
+# 04 safety_policy
+safety_policy:
+  position_margin: 0.0                            # 命令位置距离 URDF 硬限位的边距
+  cmd_vel_scale: 0.5                              # 命令速度相对 URDF velocity 的比例
+  state_vel_scale: 1.0                            # 状态速度检查比例
+  max_acc:
+    right_joint1: 10.8
+    right_joint2: 10.8
+    right_joint3: 10.8
+    right_joint4: 10.8
+    right_joint5: 10.8
+    right_joint6: 10.8
+  max_effort_override:
+    right_joint1: 0.80                             # 与 URDF / Hardware 统一的软件力矩上限 N·m
+    right_joint2: 0.80
+    right_joint3: 0.80
+    right_joint4: 0.80
+    right_joint5: 0.80
+    right_joint6: 0.80
+  max_kp_override:
+    right_joint1: 1.0
+    right_joint2: 1.0
+    right_joint3: 1.0
+    right_joint4: 1.0
+    right_joint5: 1.0
+    right_joint6: 1.0
+  max_kd_override:
+    right_joint1: 0.1
+    right_joint2: 0.1
+    right_joint3: 0.1
+    right_joint4: 0.1
+    right_joint5: 0.1
+    right_joint6: 0.1
+  max_dt_s: 0.02                                  # Safety 接受的最大控制周期
+  state_timeout_s: 0.05                           # 两帧有效硬件状态最大间隔
+  cmd_timeout_s: 0.10                             # 跟踪模式命令超时
+  require_all_actuators_online: true              # 六轴必须全部在线
+  require_all_actuators_enabled: true             # ACTIVE 时六轴必须使能
+  reject_motor_error: true                        # 拒绝执行器故障码
+  require_continuous_cmd: false                   # 允许离散外部命令
+  fault_recovery:
+    default_mode: rigid_hold                      # FAULT 默认刚性保持
+    allow_compliant_recovery: true                # 允许人工进入受限柔性恢复
+    require_operator_request: true                # 禁止自动进入柔性恢复
+    gravity_model_validated: true                 # 当前右臂模型已完成离线与初步真机重力验证
+    recovery_timeout_s: 30.0
+    compliant_recovery:
+      kp: {right_joint1: 0.0, right_joint2: 0.0, right_joint3: 0.0, right_joint4: 0.0, right_joint5: 0.0, right_joint6: 0.0}
+      kd: {right_joint1: 0.01, right_joint2: 0.01, right_joint3: 0.01, right_joint4: 0.01, right_joint5: 0.01, right_joint6: 0.01}
+      max_vel: {right_joint1: 0.5, right_joint2: 0.5, right_joint3: 0.5, right_joint4: 0.5, right_joint5: 0.5, right_joint6: 0.5}
+      effort_scale: 1.0                           # 重力补偿力矩缩放 [0, 1]
+
+# 05 shutdown
+shutdown:
+  park_before_disable: false                      # 主操作臂人工拖动使用，退出时不自动回零
+  park_pos:
+    right_joint1: 0.0
+    right_joint2: 0.0
+    right_joint3: 0.0
+    right_joint4: 0.0
+    right_joint5: 0.0
+    right_joint6: 0.0
+  speed_scale: 0.10
+  position_tolerance: 0.05
+  velocity_tolerance: 0.05
+  settle_time_s: 0.25
+  relaxed_tolerance_ratio: 2.0
+  timeout_s: 15.0

@@ -226,10 +226,31 @@ Options parse_options(int argc, char** argv) {
 }
 
 /**
- * @brief 将 MotorBusErr 输出为稳定整数值
+ * @brief 将 MotorBusErr 输出为可读名称并保留整数值
  */
 std::string error_text(serial_arm::MotorBusErr error) {
-    return std::to_string(static_cast<int>(error));
+    using serial_arm::MotorBusErr;
+    const char* name = "UNKNOWN";
+    switch(error) {
+        case MotorBusErr::NOT_CONFIGURED: name = "NOT_CONFIGURED"; break;
+        case MotorBusErr::NOT_CONNECTED: name = "NOT_CONNECTED"; break;
+        case MotorBusErr::NOT_ACTIVE: name = "NOT_ACTIVE"; break;
+        case MotorBusErr::INVALID_CFG: name = "INVALID_CFG"; break;
+        case MotorBusErr::OPEN_FAILED: name = "OPEN_FAILED"; break;
+        case MotorBusErr::READ_FAILED: name = "READ_FAILED"; break;
+        case MotorBusErr::WRITE_FAILED: name = "WRITE_FAILED"; break;
+        case MotorBusErr::INVALID_STATE: name = "INVALID_STATE"; break;
+        case MotorBusErr::INVALID_CMD: name = "INVALID_CMD"; break;
+        case MotorBusErr::ACTUATOR_OFFLINE: name = "ACTUATOR_OFFLINE"; break;
+        case MotorBusErr::ACTUATOR_FAULT: name = "ACTUATOR_FAULT"; break;
+        case MotorBusErr::TIMEOUT: name = "TIMEOUT"; break;
+        case MotorBusErr::ENABLE_FAILED: name = "ENABLE_FAILED"; break;
+        case MotorBusErr::MODE_SWITCH_FAILED: name = "MODE_SWITCH_FAILED"; break;
+        case MotorBusErr::STOP_FAILED: name = "STOP_FAILED"; break;
+        case MotorBusErr::DISABLE_FAILED: name = "DISABLE_FAILED"; break;
+        case MotorBusErr::RECOVER_FAILED: name = "RECOVER_FAILED"; break;
+    }
+    return std::string(name) + "(" + std::to_string(static_cast<int>(error)) + ")";
 }
 
 /**
@@ -325,8 +346,9 @@ void write_csv_rows(
             command.kd[i], command.vel[i], state.vel[i]);
         const auto pwm = bus.torque_to_pwm(i, tau_cmd);
         csv << std::setprecision(12) << timestamp_s << ',' << i + 1U << ','
-            << state.pos[i] << ',' << state.vel[i] << ',' << raw[i].current_raw_ma << ','
-            << raw[i].load_raw << ',' << tau_cmd << ',' << (pwm ? *pwm : 0) << ','
+            << state.pos[i] << ',' << state.vel[i] << ',' << raw[i].position_raw << ','
+            << raw[i].current_raw_ma << ',' << raw[i].load_raw << ','
+            << tau_cmd << ',' << (pwm ? *pwm : 0) << ','
             << command.kp[i] << ',' << command.kd[i] << ','
             << static_cast<int>(state.online[i]) << ',' << static_cast<int>(state.enabled[i])
             << ',' << state.err_code[i] << '\n';
@@ -341,7 +363,8 @@ void print_state(
     const std::vector<serial_arm::protocol::hiwonder_bus_servo::RawState>& raw) {
     for(std::size_t i = 0; i < state.pos.size(); ++i) {
         std::cout << "J" << i + 1U << " q=" << state.pos[i]
-            << " dq=" << state.vel[i] << " current_ma=" << raw[i].current_raw_ma
+            << " dq=" << state.vel[i] << " position_raw=" << raw[i].position_raw
+            << " current_ma=" << raw[i].current_raw_ma
             << " load_raw=" << raw[i].load_raw
             << " voltage_v=" << static_cast<double>(raw[i].voltage_raw) * 0.1
             << " temperature_c=" << static_cast<int>(raw[i].temperature_raw)
@@ -383,7 +406,7 @@ int run_loop(serial_arm::Hx10hmMotorBus& bus, const Options& options) {
             std::cerr << "failed to open CSV: " << options.csv_path << '\n';
             return EXIT_FAILURE;
         }
-        csv << "timestamp_s,joint,q_rad,dq_rad_s,current_ma,load_raw,tau_cmd_nm,"
+        csv << "timestamp_s,joint,q_rad,dq_rad_s,position_raw,current_ma,load_raw,tau_cmd_nm,"
             << "pwm_cmd,kp,kd,online,enabled,fault\n";
     }
 

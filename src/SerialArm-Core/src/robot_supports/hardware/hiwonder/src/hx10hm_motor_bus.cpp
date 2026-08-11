@@ -22,6 +22,8 @@ namespace {
 
 constexpr std::size_t HX10HM_ACTUATOR_COUNT = 6;
 constexpr std::uint16_t HX10HM_MAX_POSITION_RAW = 4095;
+constexpr std::int16_t HX10HM_MIN_ABSOLUTE_POSITION_RAW = -30719;
+constexpr std::int16_t HX10HM_MAX_ABSOLUTE_POSITION_RAW = 30719;
 constexpr double TWO_PI = 6.28318530717958647692;
 constexpr double RAD_PER_STEP = TWO_PI / 4096.0;
 
@@ -55,6 +57,16 @@ tl::expected<T, MotorBusErr> require_as(const YAML::Node& parent, const char* ke
 tl::expected<HiwonderVelocityEncoding, MotorBusErr> parse_velocity_encoding(const std::string& value) {
     if(value == "bit15_sign_magnitude") return HiwonderVelocityEncoding::Bit15SignMagnitude;
     return tl::make_unexpected(MotorBusErr::INVALID_CFG);
+}
+
+/**
+ * @brief 判断协议读取错误是否适合立即重试
+ */
+bool retryable_read_error(protocol::hiwonder_bus_servo::Err error) noexcept {
+    using Err = protocol::hiwonder_bus_servo::Err;
+    return error == Err::TIMEOUT || error == Err::CHECKSUM_MISMATCH ||
+        error == Err::MALFORMED_PACKET || error == Err::UNEXPECTED_ID ||
+        error == Err::READ_FAILED;
 }
 
 } // namespace
@@ -98,6 +110,12 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::configure(const std::string& con
         cfg.write_timeout = std::chrono::milliseconds(*write_timeout_ms);
         cfg.feedback_timeout = std::chrono::milliseconds(*feedback_timeout_ms);
         cfg.startup_read_cycles = *startup_read_cycles;
+        if(hiwonder["read_retry_count"]) {
+            cfg.read_retry_count = hiwonder["read_retry_count"].as<std::size_t>();
+        }
+        if(hiwonder["current_read_divider"]) {
+            cfg.current_read_divider = hiwonder["current_read_divider"].as<std::size_t>();
+        }
         cfg.restore_position_mode_on_deactivate = *restore_mode;
         cfg.velocity_encoding = *velocity_encoding;
         cfg.torque_feedback_mode = *torque_feedback_mode;
@@ -190,6 +208,8 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::configure(const HiwonderBusCfg& 
     raw_states_.clear();
     online_.assign(cfg_.actuators.size(), 0U);
     enabled_.assign(cfg_.actuators.size(), 0U);
+    current_cache_ma_.assign(cfg_.actuators.size(), 0U);
+    read_cycle_count_ = 0U;
     last_feedback_time_ = TimePoint{};
     configured_ = true;
     active_ = false;
@@ -263,11 +283,28 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::connect() {
 tl::expected<ActuatorState, MotorBusErr> Hx10hmMotorBus::read() {
     if(!connected_ || !protocol_) return tl::make_unexpected(MotorBusErr::NOT_CONNECTED);
 
-    const auto raw = protocol_->sync_read_states(servo_ids(), cfg_.read_timeout);
+    const auto ids = servo_ids();
+    tl::expected<std::vector<protocol::hiwonder_bus_servo::RawState>, protocol::hiwonder_bus_servo::Err> raw =
+        tl::make_unexpected(protocol::hiwonder_bus_servo::Err::TIMEOUT);
+    for(std::size_t attempt = 0; attempt <= cfg_.read_retry_count; ++attempt) {
+        raw = protocol_->sync_read_state_blocks(ids, cfg_.read_timeout);
+        if(raw || !retryable_read_error(raw.error())) break;
+    }
     if(!raw) return tl::make_unexpected(map_read_error(raw.error()));
     if(raw->size() != cfg_.actuators.size()) {
         return tl::make_unexpected(MotorBusErr::READ_FAILED);
     }
+
+    // 电流反馈当前仅用于诊断，不参与 Software MIT 或 Safety 控制
+    // 将独立 0x45 SYNC READ 降频执行，并把诊断超时视为非致命事件
+    // 避免 100 Hz 控制循环每帧强制等待第二轮六舵机应答
+    if(current_cache_ma_.size() != raw->size()) current_cache_ma_.assign(raw->size(), 0U);
+    if(read_cycle_count_ % cfg_.current_read_divider == 0U) {
+        const auto currents = protocol_->sync_read_currents(ids, cfg_.read_timeout);
+        if(currents && currents->size() == raw->size()) current_cache_ma_ = *currents;
+    }
+    for(std::size_t i = 0; i < raw->size(); ++i) (*raw)[i].current_raw_ma = current_cache_ma_[i];
+    ++read_cycle_count_;
 
     ActuatorState state;
     state.pos.resize(raw->size());
@@ -279,7 +316,8 @@ tl::expected<ActuatorState, MotorBusErr> Hx10hmMotorBus::read() {
 
     for(std::size_t i = 0; i < raw->size(); ++i) {
         if((*raw)[i].id != cfg_.actuators[i].servo_id ||
-            (*raw)[i].position_raw > HX10HM_MAX_POSITION_RAW) {
+            (*raw)[i].position_raw < HX10HM_MIN_ABSOLUTE_POSITION_RAW ||
+            (*raw)[i].position_raw > HX10HM_MAX_ABSOLUTE_POSITION_RAW) {
             return tl::make_unexpected(MotorBusErr::INVALID_STATE);
         }
         state.pos[i] = raw_position_to_rad(
@@ -310,17 +348,9 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::activate() {
     if(!connected_ || !protocol_) return tl::make_unexpected(MotorBusErr::NOT_CONNECTED);
     if(active_) return {};
 
-    const auto initial_zero = write_zero_pwm();
-    if(!initial_zero) {
-        safe_disable_noexcept();
-        return tl::make_unexpected(MotorBusErr::STOP_FAILED);
-    }
-    const auto disabled = set_all_torque(false);
-    if(!disabled) {
-        safe_disable_noexcept();
-        return tl::make_unexpected(MotorBusErr::DISABLE_FAILED);
-    }
-
+    // connect() 已逐轴确认 Torque OFF
+    // activate() 只负责在失能状态下切换运行模式，再写零 PWM 并使能
+    // 避免在 connect() 后立即重复执行 Torque OFF 事务导致不必要的 ACK / 读回失败
     for(const auto& actuator : cfg_.actuators) {
         const auto mode = ensure_run_mode(
             actuator.servo_id,
@@ -623,10 +653,10 @@ Hx10hmMotorBus::build_pwm_commands(
  * @brief 将 HX 原始位置转换为弧度
  */
 double Hx10hmMotorBus::raw_position_to_rad(
-    std::uint16_t raw,
+    std::int16_t raw,
     std::uint16_t raw_zero,
     int direction) noexcept {
-    const auto delta = static_cast<int>(raw) - static_cast<int>(raw_zero);
+    const auto delta = static_cast<std::int32_t>(raw) - static_cast<std::int32_t>(raw_zero);
     return static_cast<double>(direction * delta) * RAD_PER_STEP;
 }
 
@@ -658,6 +688,7 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::validate_cfg(const HiwonderBusCf
     if(cfg.serial_port.empty() || cfg.baudrate != 1000000 ||
         cfg.read_timeout.count() <= 0 || cfg.write_timeout.count() <= 0 ||
         cfg.feedback_timeout.count() <= 0 || cfg.startup_read_cycles == 0U ||
+        cfg.read_retry_count > 3U || cfg.current_read_divider == 0U ||
         cfg.actuators.size() != HX10HM_ACTUATOR_COUNT ||
         cfg.velocity_encoding != HiwonderVelocityEncoding::Bit15SignMagnitude ||
         cfg.torque_feedback_mode != "unavailable_zero") {

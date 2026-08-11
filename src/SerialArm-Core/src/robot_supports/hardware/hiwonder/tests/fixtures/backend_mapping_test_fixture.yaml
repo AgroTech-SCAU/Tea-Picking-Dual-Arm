@@ -1,7 +1,7 @@
 # TEST FIXTURE ONLY: every mechanical and calibration value below is synthetic.
 # The alternating positive/negative direction values only verify Hx10hmMotorBus
 # raw-to-joint mapping logic. They are unrelated to Tea's
-# mapping_direction={1,1,-1,1,1,1} and must not be used as a tea_master setup.
+# mapping_direction={1,1,-1,1,1,1} and must not be used as a tea_leader setup.
 hiwonder:
   serial_port: /dev/null
   baudrate: 1000000

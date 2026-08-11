@@ -2,13 +2,11 @@
 
 # Tea-Picking-Dual-Arm
 
-C++17 master-slave teleoperation system for dual-arm tea-picking data collection
-
 面向双臂茶叶采摘示范与数据采集的 C++17 主从遥操作系统
 
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat-square)](https://isocpp.org/)
 [![ROS 2](https://img.shields.io/badge/ROS%202-Humble-22314E?style=flat-square)](https://docs.ros.org/en/humble/)
-[![Master](https://img.shields.io/badge/Master-HX--10HM-4C8BF5?style=flat-square)](#硬件连接)
+[![Leader](https://img.shields.io/badge/Leader-HX--10HM-4C8BF5?style=flat-square)](#硬件连接)
 [![Slave](https://img.shields.io/badge/Slave-RM65--B-00A896?style=flat-square)](#硬件连接)
 
 </div>
@@ -35,14 +33,14 @@ Tea-Picking-Dual-Arm 面向双臂茶叶采摘示范操作与数据采集，当�
 
 ```mermaid
 flowchart LR
-    Operator["Operator"] --> Master["HX-10HM Master Arm ×6"]
-    Master --> Serial["SerialPort\n1 Mbps / 8N1"]
-    Serial --> HX["Hx10hm Driver"]
-    HX --> Mapper["Joint Mapping\n2048 -> 0 deg"]
+    Operator["操作者"] --> Leader["HX-10HM 主臂 ×6"]
+    Leader --> Serial["SerialPort\n1 Mbps / 8N1"]
+    Serial --> HX["Hx10hm 驱动"]
+    HX --> Mapper["关节映射\n2048 -> 0 deg"]
     Mapper --> Teleop["TeaTeleop"]
     Teleop --> RM["Rm65bBringup"]
     RM --> SDK["RealMan Native C++ SDK"]
-    SDK --> Slave["RM65-B Slave Arm"]
+    SDK --> Slave["RM65-B 从臂"]
 ```
 
 主链路保持为：
@@ -391,9 +389,9 @@ read_print_period_ms       = 100
 teleop_period_ms           = 20
 slow_max_step_degree       = 1.0
 max_start_error_degree     = 30.0
-master_home_tolerance_deg  = 2.0
-master_home_speed          = 100 steps/s
-master_home_timeout_s      = 30 s
+leader_home_tolerance_deg  = 2.0
+leader_home_speed          = 100 steps/s
+leader_home_timeout_s      = 30 s
 slave_home_speed_percent   = 10%
 mapping_direction          = [1, 1, -1, 1, 1, 1]
 ```
@@ -408,20 +406,20 @@ HX-10HM 使用 12-bit 磁编码器，当前项目将 `2048` 定义为主臂关�
 
 ```text
 raw = 2048  -> 0 deg
-raw < 2048  -> negative degree
-raw > 2048  -> positive degree
+raw < 2048  -> 负角度
+raw > 2048  -> 正角度
 ```
 
 基础角度换算为：
 
 ```text
-master_degree = (raw - 2048) * 360 / 4096
+leader_degree = (raw - 2048) * 360 / 4096
 ```
 
 最终发送到从臂前再应用逐关节方向：
 
 ```text
-slave_target[i] = direction[i] * master_degree[i]
+slave_target[i] = direction[i] * leader_degree[i]
 ```
 
 当前默认方向：
@@ -437,7 +435,7 @@ slave_target[i] = direction[i] * master_degree[i]
 ### 慢速 Teleop
 
 ```text
-Master Target
+主臂目标
   ↓
 单周期最大角度变化限制
   ↓
@@ -449,7 +447,7 @@ rm_movej_canfd(..., follow=false)
 ### 全速 Teleop
 
 ```text
-Master Target
+主臂目标
   ↓
 无上层单周期角度限速
   ↓

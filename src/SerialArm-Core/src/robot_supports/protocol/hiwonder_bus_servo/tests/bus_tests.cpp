@@ -139,13 +139,57 @@ TEST(HiwonderPacketTests, DecodesRawStateFields) {
 
     const auto state = hiwonder::decode_raw_state(state_packet, current_packet);
     ASSERT_TRUE(state);
-    EXPECT_EQ(state->position_raw, 1304U);
+    EXPECT_EQ(state->position_raw, 1304);
     EXPECT_EQ(state->velocity_raw, 1000U);
     EXPECT_EQ(state->load_raw, -300);
     EXPECT_EQ(state->voltage_raw, 0x79U);
     EXPECT_EQ(state->temperature_raw, 0x1EU);
     EXPECT_EQ(state->fault, 0x21U);
     EXPECT_EQ(state->current_raw_ma, 0x1234U);
+}
+
+TEST(HiwonderPacketTests, DecodesStateBlockWithoutCurrentTransaction) {
+    const hiwonder::StatusPacket state_packet{
+        2U,
+        0U,
+        {
+            0x00, 0x08,
+            0x10, 0x00,
+            0x00, 0x00,
+            0x7B,
+            0x24,
+            0x00,
+            0x00,
+        },
+    };
+
+    const auto state = hiwonder::decode_state_block(state_packet, 321U);
+    ASSERT_TRUE(state);
+    EXPECT_EQ(state->id, 2U);
+    EXPECT_EQ(state->position_raw, 2048);
+    EXPECT_EQ(state->velocity_raw, 16U);
+    EXPECT_EQ(state->current_raw_ma, 321U);
+}
+
+TEST(HiwonderPacketTests, DecodesSignedAbsolutePosition) {
+    const hiwonder::StatusPacket state_packet{
+        1U,
+        0U,
+        {
+            0xFF, 0xFF,
+            0x00, 0x00,
+            0x00, 0x00,
+            0x78,
+            0x20,
+            0x00,
+            0x00,
+        },
+    };
+    const hiwonder::StatusPacket current_packet{ 1U, 0U, { 0x00, 0x00 } };
+
+    const auto state = hiwonder::decode_raw_state(state_packet, current_packet);
+    ASSERT_TRUE(state);
+    EXPECT_EQ(state->position_raw, -1);
 }
 
 TEST(HiwonderPacketTests, RejectsMalformedPackets) {

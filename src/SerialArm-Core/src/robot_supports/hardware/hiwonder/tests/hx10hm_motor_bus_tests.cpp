@@ -178,10 +178,17 @@ TEST(Hx10hmMotorBusConfigTests, RejectsNonFiniteCalibration) {
 }
 
 TEST(Hx10hmMotorBusConversionTests, AppliesRawZeroAndDirectionToPosition) {
-    EXPECT_NEAR(serial_arm::Hx10hmMotorBus::raw_position_to_rad(2148U, 2048U, 1),
+    EXPECT_NEAR(serial_arm::Hx10hmMotorBus::raw_position_to_rad(2148, 2048U, 1),
         100.0 * RAD_PER_STEP, 1e-12);
-    EXPECT_NEAR(serial_arm::Hx10hmMotorBus::raw_position_to_rad(2148U, 2048U, -1),
+    EXPECT_NEAR(serial_arm::Hx10hmMotorBus::raw_position_to_rad(2148, 2048U, -1),
         -100.0 * RAD_PER_STEP, 1e-12);
+}
+
+TEST(Hx10hmMotorBusConversionTests, AcceptsSignedAbsolutePositionFeedback) {
+    EXPECT_NEAR(serial_arm::Hx10hmMotorBus::raw_position_to_rad(4096, 2048U, 1),
+        2048.0 * RAD_PER_STEP, 1e-12);
+    EXPECT_NEAR(serial_arm::Hx10hmMotorBus::raw_position_to_rad(-1, 2048U, 1),
+        -2049.0 * RAD_PER_STEP, 1e-12);
 }
 
 TEST(Hx10hmMotorBusConversionTests, DecodesVelocityBit15AndDirection) {
