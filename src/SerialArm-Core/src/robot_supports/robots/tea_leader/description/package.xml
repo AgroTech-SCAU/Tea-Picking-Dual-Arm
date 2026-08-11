@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+    <name>tea_leader_description</name>
+    <version>0.2.0</version>
+    <description>SerialArm-Core 茶叶采摘主臂 URDF、网格与配置资源</description>
+    <maintainer email="kaerei86@gmail.com">kaede-rei</maintainer>
+    <license>MIT</license>
+
+    <buildtool_depend>ament_cmake</buildtool_depend>
+    <exec_depend>xacro</exec_depend>
+
+    <export>
+        <build_type>ament_cmake</build_type>
+    </export>
+</package>

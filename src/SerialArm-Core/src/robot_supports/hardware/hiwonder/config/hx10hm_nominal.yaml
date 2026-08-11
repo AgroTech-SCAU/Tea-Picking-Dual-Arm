@@ -1,0 +1,133 @@
+# HX-10HM 六轴执行器标称配置
+#
+# 厂家参数换算：
+# - 额定堵转力矩 10 kgf·cm ≈ 0.980665 N·m
+# - 空载速度 0.10 s/60° ≈ 10.471976 rad/s
+# - 单圈位置 0..4095 对应 0..360°
+#
+# 工程标称近似：
+# - 按 ±1000 PWM 对应额定堵转能力近似，gain ≈ 1019.716213 PWM/(N·m)
+# - 当前不加入实测静摩擦 offset，不把该 gain 当作厂家实测力矩常数
+#
+# 保守软件限制：
+# - max_effort = 0.2941995 N·m，约为额定堵转力矩的 30%
+# - pwm_limit = 300
+# - max_kp = 1.0，max_kd = 0.1
+#
+# 位置反馈采用 16 位有符号绝对位置；当前 min/max 仍是单圈执行器级临时范围
+
+hiwonder:
+  serial_port: /dev/ttyACM0
+  baudrate: 1000000
+  read_timeout_ms: 8
+  write_timeout_ms: 20
+  feedback_timeout_ms: 50
+  startup_read_cycles: 3
+  read_retry_count: 1
+  current_read_divider: 10
+  restore_position_mode_on_deactivate: false
+  velocity_encoding: bit15_sign_magnitude
+  torque_feedback_mode: unavailable_zero
+  actuators:
+    - name: hx10hm_1
+      joint_name: joint1
+      servo_id: 1
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.2941995
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 300
+    - name: hx10hm_2
+      joint_name: joint2
+      servo_id: 2
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.2941995
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 300
+    - name: hx10hm_3
+      joint_name: joint3
+      servo_id: 3
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.2941995
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 300
+    - name: hx10hm_4
+      joint_name: joint4
+      servo_id: 4
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.2941995
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 300
+    - name: hx10hm_5
+      joint_name: joint5
+      servo_id: 5
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.2941995
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 300
+    - name: hx10hm_6
+      joint_name: joint6
+      servo_id: 6
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.2941995
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 300

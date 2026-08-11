@@ -1,0 +1,16 @@
+.pytest_cache/
+__pycache__/
+build/
+install/
+log/
+docs/
+dist/
+
+.VSCodeCounter/
+.vscode/
+.agents/
+.cache/
+.venv/
+
+.codex
+*.pyc

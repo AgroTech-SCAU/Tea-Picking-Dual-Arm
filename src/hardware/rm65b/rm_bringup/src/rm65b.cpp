@@ -1,6 +1,8 @@
 #include "rm_bringup/rm65b.hpp"
 
+#include <chrono>
 #include <stdexcept>
+#include <thread>
 
 // ! ========================= 宏 定 义 ========================= ! //
 
@@ -73,30 +75,50 @@ std::array<float, 6> Rm65bBringup::read_all_degree() {
     }
 
     std::array<float, 6> joint{};
+    int ret = 0;
 
-    const int ret = api_.rm_get_joint_degree(handle_, joint.data());
-    if(ret != 0) {
-        throw std::runtime_error("rm_get_joint_degree failed, error code: " + std::to_string(ret));
+    for(int attempt = 0; attempt < 2; ++attempt) {
+        ret = api_.rm_get_joint_degree(handle_, joint.data());
+        if(ret == 0) return joint;
+        if(attempt == 0) std::this_thread::sleep_for(std::chrono::milliseconds{ 5 });
     }
 
-    return joint;
+    throw std::runtime_error(
+        "rm_get_joint_degree failed twice, error code: " + std::to_string(ret));
 }
 
-void Rm65bBringup::write_all_degree(const std::array<float, 6>& degree, bool follow, int trajectory_mode, int radio) {
+void Rm65bBringup::write_all_degree(
+    const std::array<float, 6>& degree,
+    bool follow,
+    int trajectory_mode,
+    int radio) {
     if(!is_connected()) {
         throw std::logic_error("RM65-B is not connected");
     }
 
     auto target = degree;
+    int ret = 0;
 
-    const int ret = api_.rm_movej_canfd(handle_, target.data(), follow, 0, trajectory_mode, radio);
-
-    if(ret != 0) {
-        throw std::runtime_error("rm_movej_canfd failed, error code: " + std::to_string(ret));
+    for(int attempt = 0; attempt < 2; ++attempt) {
+        ret = api_.rm_movej_canfd(
+            handle_,
+            target.data(),
+            follow,
+            0,
+            trajectory_mode,
+            radio);
+        if(ret == 0) return;
+        if(attempt == 0) std::this_thread::sleep_for(std::chrono::milliseconds{ 5 });
     }
+
+    throw std::runtime_error(
+        "rm_movej_canfd failed twice, error code: " + std::to_string(ret));
 }
 
-void Rm65bBringup::movej_degree(const std::array<float, 6>& degree, int speed_percent, bool block) {
+void Rm65bBringup::movej_degree(
+    const std::array<float, 6>& degree,
+    int speed_percent,
+    bool block) {
     if(!is_connected()) {
         throw std::logic_error("RM65-B is not connected");
     }
@@ -105,12 +127,22 @@ void Rm65bBringup::movej_degree(const std::array<float, 6>& degree, int speed_pe
     }
 
     auto target = degree;
+    int ret = 0;
 
-    const int ret = api_.rm_movej(handle_, target.data(), speed_percent, 0, 0, block ? 1 : 0);
-
-    if(ret != 0) {
-        throw std::runtime_error("rm_movej failed, error code: " + std::to_string(ret));
+    for(int attempt = 0; attempt < 2; ++attempt) {
+        ret = api_.rm_movej(
+            handle_,
+            target.data(),
+            speed_percent,
+            0,
+            0,
+            block ? 1 : 0);
+        if(ret == 0) return;
+        if(attempt == 0) std::this_thread::sleep_for(std::chrono::milliseconds{ 20 });
     }
+
+    throw std::runtime_error(
+        "rm_movej failed twice, error code: " + std::to_string(ret));
 }
 
 void Rm65bBringup::stop() {
@@ -118,10 +150,15 @@ void Rm65bBringup::stop() {
         return;
     }
 
-    const int ret = api_.rm_set_arm_stop(handle_);
-    if(ret != 0) {
-        throw std::runtime_error("rm_set_arm_stop failed, error code: " + std::to_string(ret));
+    int ret = 0;
+    for(int attempt = 0; attempt < 2; ++attempt) {
+        ret = api_.rm_set_arm_stop(handle_);
+        if(ret == 0) return;
+        if(attempt == 0) std::this_thread::sleep_for(std::chrono::milliseconds{ 5 });
     }
+
+    throw std::runtime_error(
+        "rm_set_arm_stop failed twice, error code: " + std::to_string(ret));
 }
 
 // ! ========================= 私 有 类 方 法 实 现 ========================= ! //

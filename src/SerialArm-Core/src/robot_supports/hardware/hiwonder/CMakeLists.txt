@@ -1,0 +1,155 @@
+cmake_minimum_required(VERSION 3.20)
+project(serial_arm_hardware_hiwonder VERSION 0.2.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+find_package(ament_cmake QUIET)
+find_package(serial_arm_core CONFIG REQUIRED)
+find_package(serial_arm_protocol_hiwonder_bus_servo CONFIG REQUIRED)
+find_package(yaml-cpp REQUIRED)
+include(CTest)
+
+if(TARGET yaml-cpp::yaml-cpp)
+    set(SERIAL_ARM_HIWONDER_YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+elseif(TARGET yaml-cpp)
+    set(SERIAL_ARM_HIWONDER_YAML_CPP_TARGET yaml-cpp)
+else()
+    message(FATAL_ERROR "yaml-cpp was found, but no usable target exists")
+endif()
+
+add_library(serial_arm_hardware_hiwonder SHARED
+    src/hx10hm_motor_bus.cpp
+    src/plugin.cpp
+)
+
+target_include_directories(serial_arm_hardware_hiwonder
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+
+target_link_libraries(serial_arm_hardware_hiwonder
+    PUBLIC
+        serial_arm::core
+        serial_arm_protocol_hiwonder_bus_servo
+        ${SERIAL_ARM_HIWONDER_YAML_CPP_TARGET}
+)
+
+target_compile_options(serial_arm_hardware_hiwonder
+    PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
+)
+
+add_executable(serial_arm_hiwonder_calibration
+    app/serial_arm_hiwonder_calibration.cpp
+)
+target_link_libraries(serial_arm_hiwonder_calibration
+    PRIVATE
+        serial_arm_hardware_hiwonder
+)
+target_compile_options(serial_arm_hiwonder_calibration
+    PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
+)
+
+install(TARGETS
+    serial_arm_hardware_hiwonder
+    serial_arm_hiwonder_calibration
+    EXPORT serial_arm_hardware_hiwonder_targets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(DIRECTORY include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+install(DIRECTORY config/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/config
+)
+
+install(FILES package.xml
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}
+)
+
+install(FILES README.md
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}
+)
+
+configure_package_config_file(
+    cmake/serial_arm_hardware_hiwonderConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/serial_arm_hardware_hiwonderConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}
+)
+
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/serial_arm_hardware_hiwonderConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+
+install(EXPORT serial_arm_hardware_hiwonder_targets
+    FILE serial_arm_hardware_hiwonder_targets.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}
+)
+
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/serial_arm_hardware_hiwonderConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/serial_arm_hardware_hiwonderConfigVersion.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}
+)
+
+if(BUILD_TESTING)
+    find_package(GTest REQUIRED)
+
+    add_executable(serial_arm_hardware_hiwonder_tests
+        tests/hx10hm_motor_bus_tests.cpp
+    )
+    target_link_libraries(serial_arm_hardware_hiwonder_tests
+        PRIVATE
+            serial_arm_hardware_hiwonder
+            serial_arm::config
+            GTest::gtest_main
+    )
+    target_compile_features(serial_arm_hardware_hiwonder_tests PRIVATE cxx_std_17)
+    target_compile_options(serial_arm_hardware_hiwonder_tests
+        PRIVATE
+            $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
+    )
+    target_compile_definitions(serial_arm_hardware_hiwonder_tests
+        PRIVATE
+            SERIAL_ARM_HIWONDER_TEST_PLUGIN="$<TARGET_FILE:serial_arm_hardware_hiwonder>"
+            SERIAL_ARM_HIWONDER_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+            SERIAL_ARM_HIWONDER_NOMINAL_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/hx10hm_nominal.yaml"
+    )
+
+    add_test(NAME serial_arm_hardware_hiwonder_tests COMMAND serial_arm_hardware_hiwonder_tests)
+    add_test(NAME serial_arm_hiwonder_calibration_help
+        COMMAND serial_arm_hiwonder_calibration --help
+    )
+    add_test(NAME serial_arm_hiwonder_calibration_requires_confirmation
+        COMMAND serial_arm_hiwonder_calibration
+            --config ${CMAKE_CURRENT_SOURCE_DIR}/config/hx10hm_nominal.yaml
+            --mode tau
+            --joint 2
+            --tau 0.02
+    )
+    set_tests_properties(serial_arm_hiwonder_calibration_requires_confirmation
+        PROPERTIES WILL_FAIL TRUE
+    )
+endif()
+
+if(ament_cmake_FOUND)
+    ament_export_targets(serial_arm_hardware_hiwonder_targets HAS_LIBRARY_TARGET)
+    ament_export_include_directories(include)
+    ament_export_libraries(serial_arm_hardware_hiwonder)
+    ament_export_dependencies(serial_arm_core serial_arm_protocol_hiwonder_bus_servo yaml-cpp)
+    ament_package()
+endif()

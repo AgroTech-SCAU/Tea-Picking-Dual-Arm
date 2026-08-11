@@ -1,0 +1,29 @@
+# Tea Teleop 配置
+#
+# 主臂的串口、舵机 ID、重力补偿、阻抗增益和 URDF 不在此文件配置
+# 主臂配置位置：
+#   src/SerialArm-Core/src/robot_supports/robots/tea_leader/description/config/
+#   ├── core/right.yaml / core/left.yaml
+#   └── hardware/right.yaml / hardware/left.yaml
+#
+# 本文件只配置当前遥操作使用的主臂 Profile、RM65-B 连接参数和遥操作参数
+
+leader:
+  profile: tea_leader_right              # 当前使用的主臂 Profile，可改为 tea_leader_left 进行左主臂单臂测试
+
+follower:
+  ip: 192.168.1.18                       # RM65-B 控制器 IP
+  port: 8080                             # RM65-B Native SDK TCP 端口
+  home_speed_percent: 10                 # 从臂归零和启动对齐速度百分比 [1, 30]
+
+teleop:
+  duration_s: -1                          # -1 表示持续运行到 Ctrl+C，正整数表示最长运行秒数
+  period_ms: 8                            # 从臂发送周期 ms
+  slow_max_step_degree: 1.0               # 慢速遥操作每周期最大关节变化量 deg
+  max_start_error_degree: 30.0            # 启动遥操作时允许的主从最大关节角差 deg
+  mapping_direction: [-1, 1, -1, 1, 1, 1] # 主臂关节角映射到 RM65-B 的方向，仅属于遥操作坐标映射
+
+leader_home:
+  speed_degree_s: 10.0                   # 主臂归零参考速度 deg/s
+  tolerance_degree: 2.0                  # 主臂归零判定容差 deg
+  timeout_s: 30                          # 主臂归零超时 s

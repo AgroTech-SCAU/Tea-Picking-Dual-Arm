@@ -11,24 +11,24 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_index_cpp REQUIRED)
+find_package(yaml-cpp REQUIRED)
+find_package(serial_arm_core CONFIG REQUIRED)
+find_package(serial_arm_hardware_hiwonder CONFIG REQUIRED)
+find_package(tea_leader_description CONFIG REQUIRED)
+find_package(Threads REQUIRED)
 
-# tea_teleop 位于 src/bringup/tea_teleop
-# ../../ 回到 src
+if(TARGET yaml-cpp::yaml-cpp)
+    set(TEA_YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+elseif(TARGET yaml-cpp)
+    set(TEA_YAML_CPP_TARGET yaml-cpp)
+else()
+    message(FATAL_ERROR "yaml-cpp was found, but no usable target exists")
+endif()
+include(CTest)
+
 set(TEA_SRC_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 
-# 通用串口层
-add_subdirectory(
-    ${TEA_SRC_ROOT}/hardware/hiwonder/serial_port
-    ${CMAKE_CURRENT_BINARY_DIR}/serial_port
-)
-
-# HX-10HM 驱动
-add_subdirectory(
-    ${TEA_SRC_ROOT}/hardware/hiwonder/hiwonder_driver
-    ${CMAKE_CURRENT_BINARY_DIR}/hiwonder_driver
-)
-
-# RM65-B 原生 SDK 封装
 add_subdirectory(
     ${TEA_SRC_ROOT}/hardware/rm65b/rm_bringup
     ${CMAKE_CURRENT_BINARY_DIR}/rm_bringup
@@ -37,6 +37,7 @@ add_subdirectory(
 add_executable(
     teleop
     src/teleop.cpp
+    src/leader_runtime.cpp
 )
 
 target_include_directories(
@@ -45,12 +46,20 @@ target_include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+# ament_target_dependencies() 在 ROS 2 Humble 中会使用 plain signature 调用
+# target_link_libraries()，因此这里也统一使用 plain signature，避免 CMake
+# 报错“keyword signature 与 plain signature 混用”
 target_link_libraries(
     teleop
-    PRIVATE
-        hiwonder_driver
-        rm_bringup
+    rm_bringup
+    serial_arm::robot
+    serial_arm::config
+    serial_arm::dynamics
+    Threads::Threads
+    ${TEA_YAML_CPP_TARGET}
 )
+
+ament_target_dependencies(teleop ament_index_cpp)
 
 target_compile_features(teleop PRIVATE cxx_std_17)
 
@@ -76,9 +85,21 @@ install(
 )
 
 install(
-    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../../../docs/
-    DESTINATION share/${PROJECT_NAME}/docs
-    OPTIONAL
+    DIRECTORY config
+    DESTINATION share/${PROJECT_NAME}
 )
+
+if(BUILD_TESTING)
+    add_test(
+        NAME tea_teleop_leader_config
+        COMMAND teleop --check-leader --config ${CMAKE_CURRENT_SOURCE_DIR}/config/teleop.yaml
+    )
+    set_tests_properties(
+        tea_teleop_leader_config
+        PROPERTIES
+            ENVIRONMENT
+                "SERIAL_ARM_RESOURCE_PATH=${TEA_SRC_ROOT}/SerialArm-Core/src/robot_supports/profiles/config/robot_profiles.yaml:${TEA_SRC_ROOT}/SerialArm-Core/src/robot_supports/robots/tea_leader/description:${CMAKE_BINARY_DIR}/../serial_arm_hardware_hiwonder"
+    )
+endif()
 
 ament_package()
