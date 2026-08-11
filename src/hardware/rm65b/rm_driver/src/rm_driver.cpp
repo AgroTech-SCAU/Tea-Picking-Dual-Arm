@@ -3041,6 +3041,73 @@ void RmArm::Arm_Set_Tool_Voltage_Callback(const std_msgs::msg::UInt16::SharedPtr
     }
 }
 
+void RmArm::Arm_Set_Tool_IO_Mode_Callback(
+    const rm_ros_interfaces::msg::SetToolIoMode::SharedPtr msg)
+{
+    std_msgs::msg::Bool result;
+    if(msg->io_num < 1 || msg->io_num > 2 || msg->mode > 1)
+    {
+        result.data = false;
+        this->Set_Tool_IO_Mode_Result->publish(result);
+        RCLCPP_ERROR(this->get_logger(),
+            "Invalid tool IO mode request: io_num=%u mode=%u; expected io_num 1..2 and mode 0..1",
+            static_cast<unsigned int>(msg->io_num), static_cast<unsigned int>(msg->mode));
+        return;
+    }
+
+    const int32_t res = Rm_Api.rm_set_tool_IO_mode(robot_handle, msg->io_num, msg->mode);
+    result.data = (res == 0);
+    this->Set_Tool_IO_Mode_Result->publish(result);
+    if(res != 0)
+    {
+        RCLCPP_ERROR(this->get_logger(), "Set tool IO mode failed with error code %d", res);
+    }
+}
+
+void RmArm::Arm_Set_Tool_DO_State_Callback(
+    const rm_ros_interfaces::msg::SetToolDoState::SharedPtr msg)
+{
+    std_msgs::msg::Bool result;
+    if(msg->io_num < 1 || msg->io_num > 2)
+    {
+        result.data = false;
+        this->Set_Tool_DO_State_Result->publish(result);
+        RCLCPP_ERROR(this->get_logger(),
+            "Invalid tool digital output request: io_num=%u; expected 1..2",
+            static_cast<unsigned int>(msg->io_num));
+        return;
+    }
+
+    const int32_t res = Rm_Api.rm_set_tool_DO_state(robot_handle, msg->io_num, msg->state ? 1 : 0);
+    result.data = (res == 0);
+    this->Set_Tool_DO_State_Result->publish(result);
+    if(res != 0)
+    {
+        RCLCPP_ERROR(this->get_logger(), "Set tool digital output failed with error code %d", res);
+    }
+}
+
+void RmArm::Arm_Get_Tool_IO_State_Callback(const std_msgs::msg::Empty::SharedPtr msg)
+{
+    (void)msg;
+    int mode[2] = {-1, -1};
+    int state[2] = {-1, -1};
+    const int32_t res = Rm_Api.rm_get_tool_IO_state(robot_handle, state, mode);
+
+    rm_ros_interfaces::msg::ToolIoState result;
+    result.success = (res == 0);
+    for(size_t i = 0; i < 2; ++i)
+    {
+        result.mode[i] = static_cast<int8_t>(mode[i]);
+        result.state[i] = static_cast<int8_t>(state[i]);
+    }
+    this->Get_Tool_IO_State_Result->publish(result);
+    if(res != 0)
+    {
+        RCLCPP_ERROR(this->get_logger(), "Get tool IO state failed with error code %d", res);
+    }
+}
+
 void RmArm::Arm_Set_Joint_Err_Clear_Callback(const rm_ros_interfaces::msg::Jointerrclear::SharedPtr msg)
 {
     int joint_num;
@@ -4673,6 +4740,27 @@ RmArm::RmArm():
     Set_Tool_Voltage_Result = this->create_publisher<std_msgs::msg::Bool>("rm_driver/set_tool_voltage_result", rclcpp::ParametersQoS());
     Set_Tool_Voltage_Cmd = this->create_subscription<std_msgs::msg::UInt16>("rm_driver/set_tool_voltage_cmd",rclcpp::ParametersQoS(),
         std::bind(&RmArm::Arm_Set_Tool_Voltage_Callback,this,std::placeholders::_1),
+        sub_opt2);
+    Set_Tool_IO_Mode_Result = this->create_publisher<std_msgs::msg::Bool>(
+        "rm_driver/set_tool_io_mode_result", rclcpp::ParametersQoS());
+    Set_Tool_IO_Mode_Cmd =
+        this->create_subscription<rm_ros_interfaces::msg::SetToolIoMode>(
+        "rm_driver/set_tool_io_mode_cmd", rclcpp::ParametersQoS(),
+        std::bind(&RmArm::Arm_Set_Tool_IO_Mode_Callback, this, std::placeholders::_1),
+        sub_opt2);
+    Set_Tool_DO_State_Result = this->create_publisher<std_msgs::msg::Bool>(
+        "rm_driver/set_tool_do_state_result", rclcpp::ParametersQoS());
+    Set_Tool_DO_State_Cmd =
+        this->create_subscription<rm_ros_interfaces::msg::SetToolDoState>(
+        "rm_driver/set_tool_do_state_cmd", rclcpp::ParametersQoS(),
+        std::bind(&RmArm::Arm_Set_Tool_DO_State_Callback, this, std::placeholders::_1),
+        sub_opt2);
+    Get_Tool_IO_State_Result =
+        this->create_publisher<rm_ros_interfaces::msg::ToolIoState>(
+        "rm_driver/get_tool_io_state_result", rclcpp::ParametersQoS());
+    Get_Tool_IO_State_Cmd = this->create_subscription<std_msgs::msg::Empty>(
+        "rm_driver/get_tool_io_state_cmd", rclcpp::ParametersQoS(),
+        std::bind(&RmArm::Arm_Get_Tool_IO_State_Callback, this, std::placeholders::_1),
         sub_opt2);
     /*****************************************************************************end***************************************************************/
 

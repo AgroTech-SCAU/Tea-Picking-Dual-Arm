@@ -93,6 +93,9 @@ set(msg_files
   msg/Forcepositionmove.msg
   msg/Udpliftstate.msg
   msg/Alohastate.msg
+  msg/SetToolIoMode.msg
+  msg/SetToolDoState.msg
+  msg/ToolIoState.msg
 )
 
 # uncomment the following section in order to fill in

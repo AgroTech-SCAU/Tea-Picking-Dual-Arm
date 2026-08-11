@@ -25,6 +25,40 @@
 
 </div>
 
+## 末端工具数字 IO
+
+RM65-B 末端工具接口提供两路可复用数字 IO。驱动提供以下 ROS2 话题：
+
+| 功能 | 命令话题 | 消息类型 | 结果话题 |
+| --- | --- | --- | --- |
+| 设置末端电源 | `/rm_driver/set_tool_voltage_cmd` | `std_msgs/msg/UInt16` | `/rm_driver/set_tool_voltage_result` |
+| 设置 IO 模式 | `/rm_driver/set_tool_io_mode_cmd` | `rm_ros_interfaces/msg/SetToolIoMode` | `/rm_driver/set_tool_io_mode_result` |
+| 设置数字输出 | `/rm_driver/set_tool_do_state_cmd` | `rm_ros_interfaces/msg/SetToolDoState` | `/rm_driver/set_tool_do_state_result` |
+| 查询两路 IO | `/rm_driver/get_tool_io_state_cmd` | `std_msgs/msg/Empty` | `/rm_driver/get_tool_io_state_result` |
+
+### 继电器模块接线
+
+```text
+RealMan 末端                 继电器模块
+6脚：12V/24V  ──────────── VCC / DC+
+5脚：GND       ──────────── GND / DC-
+3脚：IO1       ──────────── IN / SIG
+
+继电器 COM、NO、NC ─────── 接外部负载
+```
+
+应使用与所选末端电压匹配、带光耦或三极管/MOSFET 驱动电路的继电器模块，不能将裸继电器线圈直接接到 IO1。外部夹子或电磁阀的负载电流应经过继电器触点和独立电源，不得由数字 IO 直接供给。接线前应断电，并以 RM65-B 实机航插编号和硬件手册为最终依据。
+
+继电器模块接在 IO1 时，可按以下顺序配置 24 V 电源、输出模式和高电平：
+
+```bash
+ros2 topic pub --once /rm_driver/set_tool_voltage_cmd std_msgs/msg/UInt16 "{data: 3}"
+ros2 topic pub --once /rm_driver/set_tool_io_mode_cmd rm_ros_interfaces/msg/SetToolIoMode "{io_num: 1, mode: 1}"
+ros2 topic pub --once /rm_driver/set_tool_do_state_cmd rm_ros_interfaces/msg/SetToolDoState "{io_num: 1, state: true}"
+```
+
+其中电压类型 `0/1/2/3` 分别表示 `0 V/5 V/12 V/24 V`，模式 `0/1` 分别表示输入/输出。官方 SDK 注明，电源设置为 `5 V` 时末端 IO 暂不支持输入输出，因此继电器控制应使用匹配的 `12 V` 或 `24 V` 模块。末端航插针脚和允许电流必须以对应机械臂硬件手册为准；裸继电器线圈不能直接由数字 IO 驱动。
+
 ## 目录
 * 1.[rm_driver功能包说明](#rm_driver功能包说明)
 * 2.[rm_driver功能包使用](#rm_driver功能包使用)

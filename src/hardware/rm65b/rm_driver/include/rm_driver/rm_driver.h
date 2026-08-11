@@ -119,6 +119,9 @@
 #include "rm_ros_interfaces/msg/sendproject.hpp"
 #include "rm_ros_interfaces/msg/toolsoftwareversionv4.hpp"
 #include "rm_ros_interfaces/msg/alohastate.hpp"
+#include "rm_ros_interfaces/msg/set_tool_io_mode.hpp"
+#include "rm_ros_interfaces/msg/set_tool_do_state.hpp"
+#include "rm_ros_interfaces/msg/tool_io_state.hpp"
 
 #define RAD_DEGREE 57.295791433
 #define DEGREE_RAD 0.01745
@@ -333,6 +336,11 @@ public:
     void Arm_Get_All_Work_Frame_Callback(const std_msgs::msg::Empty::SharedPtr msg);                        //查询所有工作坐标系
     /*******************************设置工具端电压*********************************/
     void Arm_Set_Tool_Voltage_Callback(const std_msgs::msg::UInt16::SharedPtr msg);                         
+    void Arm_Set_Tool_IO_Mode_Callback(
+        const rm_ros_interfaces::msg::SetToolIoMode::SharedPtr msg);
+    void Arm_Set_Tool_DO_State_Callback(
+        const rm_ros_interfaces::msg::SetToolDoState::SharedPtr msg);
+    void Arm_Get_Tool_IO_State_Callback(const std_msgs::msg::Empty::SharedPtr msg);
     /*******************************清除错误码回调函数****************************/
     void Arm_Set_Joint_Err_Clear_Callback(const rm_ros_interfaces::msg::Jointerrclear::SharedPtr msg);
     /*********************************夹爪回调函数******************************/
@@ -674,6 +682,16 @@ private:
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr Set_Tool_Voltage_Result;
     /****************************************机械臂工具端电源输出订阅器**********************************/
     rclcpp::Subscription<std_msgs::msg::UInt16>::SharedPtr Set_Tool_Voltage_Cmd;
+    /****************************************机械臂工具端数字IO**************************************/
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr Set_Tool_IO_Mode_Result;
+    rclcpp::Subscription<rm_ros_interfaces::msg::SetToolIoMode>::SharedPtr
+        Set_Tool_IO_Mode_Cmd;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr Set_Tool_DO_State_Result;
+    rclcpp::Subscription<rm_ros_interfaces::msg::SetToolDoState>::SharedPtr
+        Set_Tool_DO_State_Cmd;
+    rclcpp::Publisher<rm_ros_interfaces::msg::ToolIoState>::SharedPtr
+        Get_Tool_IO_State_Result;
+    rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr Get_Tool_IO_State_Cmd;
 
     /****************************************清除关节错误代码结果发布器**********************************/
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr Set_Joint_Err_Clear_Result;
