@@ -11,10 +11,20 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_index_cpp REQUIRED)
+find_package(yaml-cpp REQUIRED)
 find_package(serial_arm_core CONFIG REQUIRED)
 find_package(serial_arm_hardware_hiwonder CONFIG REQUIRED)
 find_package(tea_leader_description CONFIG REQUIRED)
 find_package(Threads REQUIRED)
+
+if(TARGET yaml-cpp::yaml-cpp)
+    set(TEA_YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+elseif(TARGET yaml-cpp)
+    set(TEA_YAML_CPP_TARGET yaml-cpp)
+else()
+    message(FATAL_ERROR "yaml-cpp was found, but no usable target exists")
+endif()
 include(CTest)
 
 set(TEA_SRC_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
@@ -36,15 +46,20 @@ target_include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+# ament_target_dependencies() 在 ROS 2 Humble 中会使用 plain signature 调用
+# target_link_libraries()，因此这里也统一使用 plain signature，避免 CMake
+# 报错“keyword signature 与 plain signature 混用”
 target_link_libraries(
     teleop
-    PRIVATE
-        rm_bringup
-        serial_arm::robot
-        serial_arm::config
-        serial_arm::dynamics
-        Threads::Threads
+    rm_bringup
+    serial_arm::robot
+    serial_arm::config
+    serial_arm::dynamics
+    Threads::Threads
+    ${TEA_YAML_CPP_TARGET}
 )
+
+ament_target_dependencies(teleop ament_index_cpp)
 
 target_compile_features(teleop PRIVATE cxx_std_17)
 
@@ -69,10 +84,15 @@ install(
     DESTINATION lib/${PROJECT_NAME}
 )
 
+install(
+    DIRECTORY config
+    DESTINATION share/${PROJECT_NAME}
+)
+
 if(BUILD_TESTING)
     add_test(
         NAME tea_teleop_leader_config
-        COMMAND teleop --check-leader
+        COMMAND teleop --check-leader --config ${CMAKE_CURRENT_SOURCE_DIR}/config/teleop.yaml
     )
     set_tests_properties(
         tea_teleop_leader_config

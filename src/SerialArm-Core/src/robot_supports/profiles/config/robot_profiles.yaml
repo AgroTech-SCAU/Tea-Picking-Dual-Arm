@@ -55,3 +55,19 @@ profiles:
     controllers:
       package: tea_leader_description
       config: config/ros2_controllers_right.yaml
+
+  tea_leader_left:
+    core:
+      package: tea_leader_description
+      config: config/core/left.yaml
+    hardware:
+      plugin: serial_arm_hardware_hiwonder
+      config_package: tea_leader_description
+      config: config/hardware/left.yaml
+    description:
+      package: tea_leader_description
+      urdf: model/left/urdf/tea_leader_left.urdf
+      ros2_control_xacro: model/left/urdf/tea_leader_left.ros2_control.xacro
+    controllers:
+      package: tea_leader_description
+      config: config/ros2_controllers_left.yaml

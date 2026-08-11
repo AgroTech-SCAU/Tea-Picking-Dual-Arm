@@ -335,14 +335,27 @@ Hardware Backend 通过 `MotorBus` 接收统一的 `position / velocity / torque
 
 以仓库当前 [LICENSE](LICENSE) 为准
 
-### 茶叶采摘右主操作臂
+### 茶叶采摘主操作臂
 
-右主操作臂使用统一 Robot Profile
+左右主操作臂分别使用独立 Robot Profile
 
 ```bash
 serial_arm_terminal --robot-profile tea_leader_right
+serial_arm_terminal --robot-profile tea_leader_left
 ```
 
-`tea_leader_right` 使用 `GRAVITY` 模型前馈，当前实机重力补偿比例为 `0.3`
+主臂配置位于
+
+```text
+src/robot_supports/robots/tea_leader/description/config/
+├── core/right.yaml
+├── core/left.yaml
+├── hardware/right.yaml
+└── hardware/left.yaml
+```
+
+右主臂使用 `GRAVITY` 模型前馈，当前实机重力补偿比例为 `0.3`
+
+左主臂控制参数暂沿用右臂初值，首次上机仍需独立确认重力补偿效果
 
 Tea-Picking-Dual-Arm 正式遥操作由 Tea Teleop 内部创建 SerialArm Robot，`serial_arm_terminal` 仅用于独立调试

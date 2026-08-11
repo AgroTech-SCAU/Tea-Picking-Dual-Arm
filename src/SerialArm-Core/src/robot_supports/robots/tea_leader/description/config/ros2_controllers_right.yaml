@@ -1,6 +1,8 @@
+# Tea Leader Right ros2_control 配置
+# 该配置仅用于 ros2_control 接入，不参与 tea_teleop 的原生 C++ 遥操作循环
 controller_manager:
   ros__parameters:
-    update_rate: 100
+    update_rate: 100  # controller_manager 更新频率 Hz
 
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
@@ -10,18 +12,18 @@ controller_manager:
 
 joint_trajectory_controller:
   ros__parameters:
-    joints:
+    joints:  # 关节顺序必须与 tea_leader_right Core 配置一致
       - right_joint1
       - right_joint2
       - right_joint3
       - right_joint4
       - right_joint5
       - right_joint6
-    command_interfaces:
+    command_interfaces:  # SerialArm ros2_control 对外命令接口
       - position
       - velocity
-    state_interfaces:
+    state_interfaces:    # 对外发布的状态接口
       - position
       - velocity
-    allow_partial_joints_goal: false
-    open_loop_control: false
+    allow_partial_joints_goal: false  # 轨迹目标必须包含全部六轴
+    open_loop_control: false           # 使用真实硬件状态闭环更新 controller 状态

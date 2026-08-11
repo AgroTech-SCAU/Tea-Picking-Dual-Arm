@@ -6,6 +6,7 @@
 #include <chrono>
 #include <exception>
 #include <cmath>
+#include <filesystem>
 #include <csignal>
 #include <cstdint>
 #include <iomanip>
@@ -19,6 +20,9 @@
 #include <thread>
 #include <utility>
 
+#include <ament_index_cpp/get_package_share_directory.hpp>
+#include <yaml-cpp/yaml.h>
+
 #include "serial_arm/core/types.hpp"
 #include "tea_teleop/leader_runtime.hpp"
 
@@ -31,7 +35,6 @@ constexpr double kHomeStaticAssistNm = 0.04;
 constexpr float kAlignMaxStepDegree = 0.25F;
 constexpr float kAlignSettleToleranceDegree = 0.5F;
 constexpr auto kAlignTimeout = std::chrono::seconds{ 8 };
-constexpr auto kTeleopPeriod = std::chrono::milliseconds{ 20 };
 
 volatile std::sig_atomic_t g_interrupt_requested = 0;
 
@@ -45,6 +48,129 @@ void clear_interrupt() {
 
 bool interrupted() {
     return g_interrupt_requested != 0;
+}
+
+const YAML::Node require_map(
+    const YAML::Node& parent,
+    const char* key,
+    const char* context) {
+    const YAML::Node node = parent[key];
+    if(!node || !node.IsMap()) {
+        throw std::runtime_error(
+            std::string("遥操作配置缺少映射项: ") + context + "." + key);
+    }
+    return node;
+}
+
+template <typename T>
+T require_value(
+    const YAML::Node& parent,
+    const char* key,
+    const char* context) {
+    const YAML::Node node = parent[key];
+    if(!node) {
+        throw std::runtime_error(
+            std::string("遥操作配置缺少参数: ") + context + "." + key);
+    }
+    try {
+        return node.as<T>();
+    }
+    catch(const YAML::Exception&) {
+        throw std::runtime_error(
+            std::string("遥操作配置参数类型错误: ") + context + "." + key);
+    }
+}
+
+TeleopConfig load_teleop_config(const std::string& path) {
+    YAML::Node root;
+    try {
+        root = YAML::LoadFile(path);
+    }
+    catch(const YAML::Exception& error) {
+        throw std::runtime_error(
+            "遥操作配置加载失败: " + path + " (" + error.what() + ")");
+    }
+
+    const YAML::Node leader = require_map(root, "leader", "root");
+    const YAML::Node follower = require_map(root, "follower", "root");
+    const YAML::Node teleop = require_map(root, "teleop", "root");
+    const YAML::Node leader_home = require_map(root, "leader_home", "root");
+
+    TeleopConfig config;
+    config.leader_profile = require_value<std::string>(leader, "profile", "leader");
+    config.rm_ip = require_value<std::string>(follower, "ip", "follower");
+    config.rm_port = require_value<int>(follower, "port", "follower");
+    config.slave_home_speed_percent =
+        require_value<int>(follower, "home_speed_percent", "follower");
+
+    config.teleop_duration_s = require_value<int>(teleop, "duration_s", "teleop");
+    config.teleop_period_ms = require_value<int>(teleop, "period_ms", "teleop");
+    config.slow_max_step_degree =
+        require_value<float>(teleop, "slow_max_step_degree", "teleop");
+    config.max_start_error_degree =
+        require_value<float>(teleop, "max_start_error_degree", "teleop");
+
+    const YAML::Node mapping = teleop["mapping_direction"];
+    if(!mapping || !mapping.IsSequence() || mapping.size() != kJointCount) {
+        throw std::runtime_error("teleop.mapping_direction 必须包含 6 个方向值");
+    }
+    for(std::size_t i = 0; i < kJointCount; ++i) {
+        const float value = mapping[i].as<float>();
+        if(value != 1.0F && value != -1.0F) {
+            throw std::runtime_error("teleop.mapping_direction 只允许 1 或 -1");
+        }
+        config.mapping_direction[i] = value;
+    }
+
+    config.leader_home_speed_degree_s =
+        require_value<float>(leader_home, "speed_degree_s", "leader_home");
+    config.leader_home_tolerance_degree =
+        require_value<float>(leader_home, "tolerance_degree", "leader_home");
+    config.leader_home_timeout_s =
+        require_value<int>(leader_home, "timeout_s", "leader_home");
+
+    if(config.leader_profile.empty()) {
+        throw std::runtime_error("leader.profile 不能为空");
+    }
+    if(config.rm_ip.empty()) {
+        throw std::runtime_error("follower.ip 不能为空");
+    }
+    if(config.rm_port < 1 || config.rm_port > 65535) {
+        throw std::runtime_error("follower.port 必须位于 [1, 65535]");
+    }
+    if(config.slave_home_speed_percent < 1 || config.slave_home_speed_percent > 30) {
+        throw std::runtime_error("follower.home_speed_percent 必须位于 [1, 30]");
+    }
+    if(config.teleop_duration_s != -1 && config.teleop_duration_s < 1) {
+        throw std::runtime_error("teleop.duration_s 只允许 -1 或正整数");
+    }
+    if(config.teleop_period_ms < 5 || config.teleop_period_ms > 100) {
+        throw std::runtime_error("teleop.period_ms 必须位于 [5, 100]");
+    }
+    if(config.slow_max_step_degree <= 0.0F || config.slow_max_step_degree > 5.0F) {
+        throw std::runtime_error("teleop.slow_max_step_degree 必须位于 (0, 5]");
+    }
+    if(config.max_start_error_degree <= 0.0F || config.max_start_error_degree > 180.0F) {
+        throw std::runtime_error("teleop.max_start_error_degree 必须位于 (0, 180]");
+    }
+    if(config.leader_home_speed_degree_s < 2.0F || config.leader_home_speed_degree_s > 30.0F) {
+        throw std::runtime_error("leader_home.speed_degree_s 必须位于 [2, 30]");
+    }
+    if(config.leader_home_tolerance_degree < 0.5F ||
+       config.leader_home_tolerance_degree > 5.0F) {
+        throw std::runtime_error("leader_home.tolerance_degree 必须位于 [0.5, 5]");
+    }
+    if(config.leader_home_timeout_s < 5 || config.leader_home_timeout_s > 60) {
+        throw std::runtime_error("leader_home.timeout_s 必须位于 [5, 60]");
+    }
+
+    return config;
+}
+
+std::string default_teleop_config_path() {
+    const std::filesystem::path share =
+        ament_index_cpp::get_package_share_directory("tea_teleop");
+    return (share / "config" / "teleop.yaml").string();
 }
 
 std::string prompt_line(const std::string& prompt) {
@@ -242,7 +368,8 @@ private:
 } // namespace
 
 TeaTeleop::TeaTeleop(TeleopConfig config)
-    : config_(std::move(config)) {}
+    : config_(std::move(config)),
+      default_config_(config_) {}
 
 int TeaTeleop::run() {
     std::signal(SIGINT, signal_handler);
@@ -305,6 +432,7 @@ void TeaTeleop::print_config() const {
         << "主臂 Profile             = " << config_.leader_profile << "\n"
         << "RM65-B 地址              = " << config_.rm_ip << ":" << config_.rm_port << "\n"
         << "遥操作持续时间           = " << config_.teleop_duration_s << " s\n"
+        << "遥操作发送周期           = " << config_.teleop_period_ms << " ms\n"
         << "慢速单周期最大变化       = " << config_.slow_max_step_degree << " deg\n"
         << "启动最大允许角差         = " << config_.max_start_error_degree << " deg\n"
         << "主臂归零容差             = " << config_.leader_home_tolerance_degree << " deg\n"
@@ -333,7 +461,7 @@ void TeaTeleop::config_menu() {
             << " 7. 修改主臂归零超时\n"
             << " 8. 修改从臂归零/对齐速度\n"
             << " 9. 修改遥操作持续时间\n"
-            << "10. 恢复默认配置\n"
+            << "10. 恢复启动配置\n"
             << " 0. 返回\n";
 
         switch(prompt_int("选择配置项: ")) {
@@ -408,8 +536,8 @@ void TeaTeleop::config_menu() {
 
             case 10:
                 rm_.disconnect();
-                config_ = TeleopConfig{};
-                std::cout << "已恢复默认配置\n";
+                config_ = default_config_;
+                std::cout << "已恢复启动时加载的配置\n";
                 break;
 
             default:
@@ -432,7 +560,7 @@ void TeaTeleop::mapping_direction_menu() {
         const int joint = prompt_int("选择关节 [1~6]，0 返回，7 恢复默认方向: ");
         if(joint == 0) return;
         if(joint == 7) {
-            config_.mapping_direction = TeleopConfig{}.mapping_direction;
+            config_.mapping_direction = default_config_.mapping_direction;
             continue;
         }
         if(joint < 1 || joint > 6) {
@@ -708,7 +836,7 @@ void TeaTeleop::teleop(TeleopMode mode) {
                 align_settled_cycles = aligned ? align_settled_cycles + 1U : 0U;
                 if(align_settled_cycles >= 10U) break;
 
-                align_next_tick += kTeleopPeriod;
+                align_next_tick += std::chrono::milliseconds{ config_.teleop_period_ms };
                 const auto after_align_work = std::chrono::steady_clock::now();
                 if(align_next_tick > after_align_work) {
                     std::this_thread::sleep_until(align_next_tick);
@@ -768,7 +896,7 @@ void TeaTeleop::teleop(TeleopMode mode) {
                 last_status = after_work;
             }
 
-            next_tick += kTeleopPeriod;
+            next_tick += std::chrono::milliseconds{ config_.teleop_period_ms };
             if(next_tick > after_work) {
                 std::this_thread::sleep_until(next_tick);
             }
@@ -861,10 +989,38 @@ void TeaTeleop::validate_start_error(
 }
 
 int main(int argc, char** argv) {
-    TeleopConfig config;
+    try {
+        std::string config_path;
+        bool check_leader = false;
 
-    if(argc >= 2 && std::string(argv[1]) == "--check-leader") {
-        try {
+        for(int i = 1; i < argc; ++i) {
+            const std::string arg = argv[i];
+            if(arg == "--config") {
+                if(i + 1 >= argc) {
+                    std::cerr << "--config 后必须提供 YAML 路径\n";
+                    return 2;
+                }
+                config_path = argv[++i];
+            }
+            else if(arg == "--check-leader") {
+                check_leader = true;
+            }
+            else if(arg == "--help" || arg == "-h") {
+                std::cout
+                    << "用法: ros2 run tea_teleop teleop [--config <teleop.yaml>]\n"
+                    << "      tea_teleop --check-leader [--config <teleop.yaml>]\n";
+                return 0;
+            }
+            else {
+                std::cerr << "未知参数: " << arg << "\n";
+                return 2;
+            }
+        }
+
+        if(config_path.empty()) config_path = default_teleop_config_path();
+        const TeleopConfig config = load_teleop_config(config_path);
+
+        if(check_leader) {
             tea_teleop::LeaderRuntime runtime;
             runtime.initialize(config.leader_profile);
             std::cout
@@ -872,18 +1028,7 @@ int main(int argc, char** argv) {
                 << "  控制频率=" << runtime.control_frequency_hz() << " Hz\n";
             return 0;
         }
-        catch(const std::exception& error) {
-            std::cerr << "主臂配置检查失败: " << error.what() << "\n";
-            return 1;
-        }
-    }
 
-    if(argc != 1) {
-        std::cerr << "用法: ros2 run tea_teleop teleop\n";
-        return 2;
-    }
-
-    try {
         TeaTeleop app(config);
         return app.run();
     }

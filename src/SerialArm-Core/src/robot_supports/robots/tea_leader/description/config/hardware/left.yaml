@@ -1,0 +1,150 @@
+# Tea Leader Left Hiwonder Hardware Config
+#
+# 目录
+# 01 serial            串口与读写时序
+# 02 feedback          反馈解析与诊断频率
+# 03 actuators         舵机 ID、零位、方向和 Software MIT 限幅
+#
+# 说明
+# - 此文件只配置 HX-10HM Hardware Backend
+# - 动力学、重力补偿比例、阻抗增益和 Safety 位于 ../core/left.yaml
+# - 六轴共用一条 Hiwonder Bus Servo 总线，默认 1 Mbps
+# - 当前执行器方向均为 1，URDF axis 与 Hardware direction 属于不同层级
+
+hiwonder:
+  # 01 serial
+  serial_port: /dev/ttyACM0              # 左主臂 HX 总线串口，可改为 /dev/serial/by-id/... 提高设备名稳定性
+  baudrate: 1000000                      # HX-10HM 总线波特率
+  read_timeout_ms: 8                     # 单次实时状态读取超时 ms
+  write_timeout_ms: 20                   # 写命令及状态 ACK 超时 ms
+  feedback_timeout_ms: 50                # Backend 允许的最近有效反馈年龄 ms
+  startup_read_cycles: 3                 # 启动时连续读取有效状态的次数
+  read_retry_count: 1                    # SYNC READ 瞬态失败后的额外重试次数
+
+  # 02 feedback
+  current_read_divider: 10               # 电流诊断分频，100 Hz 控制下约 10 Hz 更新一次电流
+  velocity_encoding: bit15_sign_magnitude # HX 速度寄存器符号编码方式
+  torque_feedback_mode: unavailable_zero # 尚未完成电流到真实关节力矩标定，tau_feedback 返回 0
+  restore_position_mode_on_deactivate: false # 失能后不改写非易失运行模式，避免频繁写 NVS
+
+  # 03 actuators
+  # 公共参数说明
+  # servo_id             总线舵机 ID
+  # raw_zero             机械零位对应的原始位置值，当前六轴均为 2048
+  # direction            执行器原始正方向到 SerialArm 执行器正方向的符号
+  # min_pos/max_pos      当前执行器单圈软件范围 rad，不等同机构最终机械硬限位
+  # max_vel              执行器侧最大速度 rad/s
+  # max_effort           Software MIT 力矩命令软件峰值上限 N·m
+  # max_kp/max_kd        Software MIT 增益上限
+  # positive/negative_gain  Torque -> PWM 线性换算斜率 PWM/(N·m)
+  # positive/negative_offset Torque -> PWM 偏置，未标定时保持 0
+  # torque_deadband_nm   力矩死区，未标定时保持 0
+  # pwm_limit            PWM Open-Loop 绝对值上限，816 对应当前 0.80 N·m 软件峰值配置
+  actuators:
+    - name: left_hx10hm_1
+      joint_name: left_joint1
+      servo_id: 1
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.800000
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 816
+
+    - name: left_hx10hm_2
+      joint_name: left_joint2
+      servo_id: 2
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.800000
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 816
+
+    - name: left_hx10hm_3
+      joint_name: left_joint3
+      servo_id: 3
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.800000
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 816
+
+    - name: left_hx10hm_4
+      joint_name: left_joint4
+      servo_id: 4
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.800000
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 816
+
+    - name: left_hx10hm_5
+      joint_name: left_joint5
+      servo_id: 5
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.800000
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 816
+
+    - name: left_hx10hm_6
+      joint_name: left_joint6
+      servo_id: 6
+      raw_zero: 2048
+      direction: 1
+      min_pos: -3.141592654
+      max_pos: 3.140058673
+      max_vel: 10.471976
+      max_effort: 0.800000
+      max_kp: 1.0
+      max_kd: 0.1
+      positive_gain: 1019.716213
+      negative_gain: 1019.716213
+      positive_offset: 0.0
+      negative_offset: 0.0
+      torque_deadband_nm: 0.0
+      pwm_limit: 816

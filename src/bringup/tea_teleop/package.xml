@@ -9,6 +9,8 @@
 
     <buildtool_depend>ament_cmake</buildtool_depend>
 
+    <depend>ament_index_cpp</depend>
+    <depend>yaml-cpp</depend>
     <depend>serial_arm_core</depend>
     <depend>serial_arm_hardware_hiwonder</depend>
     <depend>tea_leader_description</depend>
