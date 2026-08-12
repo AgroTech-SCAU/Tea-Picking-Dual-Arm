@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <thread>
 #include <utility>
 
 namespace serial_arm {
@@ -35,7 +36,7 @@ constexpr double RAD_PER_STEP = TWO_PI / 4096.0;
 bool finite_vector(const std::vector<double>& values) {
     return std::all_of(values.begin(), values.end(), [](double value) {
         return std::isfinite(value);
-    });
+        });
 }
 
 /**
@@ -288,13 +289,13 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::connect() {
         }
         if(std::any_of(state->online.begin(), state->online.end(), [](std::uint8_t value) {
             return value == 0U;
-        })) {
+            })) {
             release_connection_noexcept(true);
             return tl::make_unexpected(MotorBusErr::ACTUATOR_OFFLINE);
         }
         if(std::any_of(state->err_code.begin(), state->err_code.end(), [](int value) {
             return value != 0;
-        })) {
+            })) {
             release_connection_noexcept(true);
             return tl::make_unexpected(MotorBusErr::ACTUATOR_FAULT);
         }
@@ -413,13 +414,13 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::activate() {
         const auto state = read();
         if(!state || std::any_of(state->online.begin(), state->online.end(), [](std::uint8_t value) {
             return value == 0U;
-        })) {
+            })) {
             safe_disable_noexcept();
             return tl::make_unexpected(MotorBusErr::ACTUATOR_OFFLINE);
         }
         if(std::any_of(state->err_code.begin(), state->err_code.end(), [](int value) {
             return value != 0;
-        })) {
+            })) {
             safe_disable_noexcept();
             return tl::make_unexpected(MotorBusErr::ACTUATOR_FAULT);
         }
@@ -471,7 +472,18 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::deactivate() {
     if(!connected_ || !protocol_) return tl::make_unexpected(MotorBusErr::NOT_CONNECTED);
 
     const auto stopped = write_zero_pwm();
-    const auto disabled = set_all_torque(false);
+
+    constexpr std::size_t kDisableAttempts = 3U;
+    constexpr auto kDisableRetryDelay = std::chrono::milliseconds{ 20 };
+    tl::expected<void, MotorBusErr> disabled = tl::make_unexpected(MotorBusErr::DISABLE_FAILED);
+    for(std::size_t attempt = 0; attempt < kDisableAttempts; ++attempt) {
+        disabled = set_all_torque(false);
+        if(disabled) break;
+        if(attempt + 1U < kDisableAttempts) {
+            std::this_thread::sleep_for(kDisableRetryDelay);
+        }
+    }
+
     bool mode_failed = false;
     if(cfg_.restore_position_mode_on_deactivate) {
         for(const auto& actuator : cfg_.actuators) {
@@ -648,17 +660,17 @@ Hx10hmMotorBus::build_pwm_commands(
     }
     if(std::any_of(state.online.begin(), state.online.end(), [](std::uint8_t value) {
         return value == 0U;
-    })) {
+        })) {
         return tl::make_unexpected(MotorBusErr::ACTUATOR_OFFLINE);
     }
     if(std::any_of(state.enabled.begin(), state.enabled.end(), [](std::uint8_t value) {
         return value == 0U;
-    })) {
+        })) {
         return tl::make_unexpected(MotorBusErr::NOT_ACTIVE);
     }
     if(std::any_of(state.err_code.begin(), state.err_code.end(), [](int value) {
         return value != 0;
-    })) {
+        })) {
         return tl::make_unexpected(MotorBusErr::ACTUATOR_FAULT);
     }
 
@@ -681,7 +693,7 @@ Hx10hmMotorBus::build_pwm_commands(
         commands.push_back(protocol::hiwonder_bus_servo::PwmCommand{
             cfg_.actuators[i].servo_id,
             *pwm,
-        });
+            });
     }
     return commands;
 }
