@@ -42,6 +42,13 @@ tea_leader_left
 
 当前 `tea_teleop` 仍按单主臂到单 RM65-B 的方式运行，默认使用右主臂
 
+## SerialArm-Core 基线
+
+```text
+Upstream: https://github.com/Kaede-Rei/SerialArm-Core
+Tag: v0.3.0
+```
+
 ## 当前能力
 
 - 读取主臂关节状态
