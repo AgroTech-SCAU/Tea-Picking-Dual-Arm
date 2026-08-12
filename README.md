@@ -65,6 +65,8 @@ Tag: v0.3.0
 - Ctrl+C 中断后停止从臂并失能主臂
 - 右主臂 Robot Profile
 - 左主臂 Robot Profile
+- 可选 HX-10HM 末端回弹 Tool Button
+- Tool Button 与 Joint1~Joint6 共用同一 Hiwonder Bus Servo 串口
 
 ## 目录结构
 
@@ -230,6 +232,33 @@ max_effort     Software MIT 力矩软件上限
 max_kp/max_kd  Software MIT 增益上限
 pwm_limit      PWM Open-Loop 输出上限
 ```
+
+#### 配置末端回弹 Tool Button
+
+Tool Button 配置位于对应侧的 `config/hardware/*.yaml`，与六轴使用同一个 `serial_port`
+
+```yaml
+tool_button:
+  enabled: false
+  servo_id: 7
+  raw_zero: 2048
+  direction: 1
+  press_threshold_rad: 0.20
+  release_threshold_rad: 0.12
+  kp: 0.10
+  kd: 0.01
+  max_effort: 0.08
+  positive_gain: 1019.716213
+  negative_gain: 1019.716213
+  positive_offset: 0.0
+  negative_offset: 0.0
+  torque_deadband_nm: 0.0
+  pwm_limit: 80
+```
+
+`enabled: false` 保持原六轴行为不变，安装并确认 ID7、零位和按压方向后再改为 `true`
+
+Tool Button 不属于第 7 个 Robot joint，不改变 `tea_leader_right` / `tea_leader_left` 的 6DOF、MotorBus size、HardwareCapabilities 和 Robot ActuatorState 维度
 
 #### 配置重力补偿与控制参数
 

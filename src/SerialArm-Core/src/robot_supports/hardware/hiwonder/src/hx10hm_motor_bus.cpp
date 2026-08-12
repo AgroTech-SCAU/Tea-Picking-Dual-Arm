@@ -177,6 +177,56 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::configure(const std::string& con
             actuator.pwm_limit = static_cast<std::int16_t>(*pwm_limit);
             cfg.actuators.push_back(std::move(actuator));
         }
+
+        const YAML::Node tool_button = hiwonder["tool_button"];
+        if(tool_button) {
+            if(!tool_button.IsMap()) return tl::make_unexpected(MotorBusErr::INVALID_CFG);
+
+            auto enabled = require_as<bool>(tool_button, "enabled");
+            auto servo_id = require_as<int>(tool_button, "servo_id");
+            auto raw_zero = require_as<int>(tool_button, "raw_zero");
+            auto direction = require_as<int>(tool_button, "direction");
+            auto press_threshold_rad = require_as<double>(tool_button, "press_threshold_rad");
+            auto release_threshold_rad = require_as<double>(tool_button, "release_threshold_rad");
+            auto kp = require_as<double>(tool_button, "kp");
+            auto kd = require_as<double>(tool_button, "kd");
+            auto max_effort = require_as<double>(tool_button, "max_effort");
+            auto pwm_limit = require_as<int>(tool_button, "pwm_limit");
+            if(!enabled || !servo_id || !raw_zero || !direction || !press_threshold_rad ||
+                !release_threshold_rad || !kp || !kd || !max_effort || !pwm_limit ||
+                *servo_id < 0 || *servo_id >= protocol::hiwonder_bus_servo::BROADCAST_ID ||
+                *raw_zero < 0 || *raw_zero > HX10HM_MAX_POSITION_RAW ||
+                *pwm_limit <= 0 || *pwm_limit > 1000) {
+                return tl::make_unexpected(MotorBusErr::INVALID_CFG);
+            }
+
+            cfg.tool_button.enabled = *enabled;
+            cfg.tool_button.servo_id = static_cast<std::uint8_t>(*servo_id);
+            cfg.tool_button.raw_zero = static_cast<std::uint16_t>(*raw_zero);
+            cfg.tool_button.direction = *direction;
+            cfg.tool_button.press_threshold_rad = *press_threshold_rad;
+            cfg.tool_button.release_threshold_rad = *release_threshold_rad;
+            cfg.tool_button.kp = *kp;
+            cfg.tool_button.kd = *kd;
+            cfg.tool_button.max_effort = *max_effort;
+            cfg.tool_button.pwm_limit = static_cast<std::int16_t>(*pwm_limit);
+
+            if(tool_button["positive_gain"]) {
+                cfg.tool_button.positive_gain = tool_button["positive_gain"].as<double>();
+            }
+            if(tool_button["negative_gain"]) {
+                cfg.tool_button.negative_gain = tool_button["negative_gain"].as<double>();
+            }
+            if(tool_button["positive_offset"]) {
+                cfg.tool_button.positive_offset = tool_button["positive_offset"].as<double>();
+            }
+            if(tool_button["negative_offset"]) {
+                cfg.tool_button.negative_offset = tool_button["negative_offset"].as<double>();
+            }
+            if(tool_button["torque_deadband_nm"]) {
+                cfg.tool_button.torque_deadband_nm = tool_button["torque_deadband_nm"].as<double>();
+            }
+        }
         return configure(cfg);
     }
     catch(const YAML::Exception&) {
@@ -214,6 +264,9 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::configure(const HiwonderBusCfg& 
     current_cache_ma_.assign(cfg_.actuators.size(), 0U);
     position_calibration_raw_.assign(cfg_.actuators.size(), 0);
     encoder_zero_raw_.assign(cfg_.actuators.size(), 0U);
+    tool_button_state_ = ToolButtonState{};
+    tool_button_position_calibration_raw_ = 0;
+    tool_button_encoder_zero_raw_ = 0U;
     read_cycle_count_ = 0U;
     last_feedback_time_ = TimePoint{};
     configured_ = true;
@@ -282,6 +335,27 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::connect() {
                 *calibration);
         }
 
+        if(cfg_.tool_button.enabled) {
+            tl::expected<std::int16_t, protocol::hiwonder_bus_servo::Err> calibration =
+                tl::make_unexpected(protocol::hiwonder_bus_servo::Err::TIMEOUT);
+            for(std::size_t attempt = 0; attempt <= cfg_.read_retry_count; ++attempt) {
+                calibration = protocol_->read_position_calibration(
+                    cfg_.tool_button.servo_id,
+                    cfg_.read_timeout);
+                if(calibration || !retryable_read_error(calibration.error())) break;
+            }
+            if(!calibration) {
+                tool_button_state_.online = false;
+                const auto error = map_read_error(calibration.error());
+                release_connection_noexcept(true);
+                return tl::make_unexpected(error);
+            }
+            tool_button_position_calibration_raw_ = *calibration;
+            tool_button_encoder_zero_raw_ = normalize_position_raw(
+                static_cast<std::int32_t>(cfg_.tool_button.raw_zero),
+                *calibration);
+        }
+
         const auto state = read();
         if(!state) {
             release_connection_noexcept(true);
@@ -313,41 +387,48 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::connect() {
 tl::expected<ActuatorState, MotorBusErr> Hx10hmMotorBus::read() {
     if(!connected_ || !protocol_) return tl::make_unexpected(MotorBusErr::NOT_CONNECTED);
 
-    const auto ids = servo_ids();
+    const auto ids = feedback_servo_ids();
     tl::expected<std::vector<protocol::hiwonder_bus_servo::RawState>, protocol::hiwonder_bus_servo::Err> raw =
         tl::make_unexpected(protocol::hiwonder_bus_servo::Err::TIMEOUT);
     for(std::size_t attempt = 0; attempt <= cfg_.read_retry_count; ++attempt) {
         raw = protocol_->sync_read_state_blocks(ids, cfg_.read_timeout);
         if(raw || !retryable_read_error(raw.error())) break;
     }
-    if(!raw) return tl::make_unexpected(map_read_error(raw.error()));
-    if(raw->size() != cfg_.actuators.size()) {
+    if(!raw) {
+        if(cfg_.tool_button.enabled) tool_button_state_.online = false;
+        return tl::make_unexpected(map_read_error(raw.error()));
+    }
+    const std::size_t joint_count = cfg_.actuators.size();
+    const std::size_t expected_count = joint_count + (cfg_.tool_button.enabled ? 1U : 0U);
+    if(raw->size() != expected_count) {
+        if(cfg_.tool_button.enabled) tool_button_state_.online = false;
         return tl::make_unexpected(MotorBusErr::READ_FAILED);
     }
-    if(position_calibration_raw_.size() != raw->size() || encoder_zero_raw_.size() != raw->size()) {
+    if(position_calibration_raw_.size() != joint_count || encoder_zero_raw_.size() != joint_count) {
         return tl::make_unexpected(MotorBusErr::INVALID_STATE);
     }
 
     // 电流反馈当前仅用于诊断，不参与 Software MIT 或 Safety 控制
     // 将独立 0x45 SYNC READ 降频执行，并把诊断超时视为非致命事件
     // 避免 100 Hz 控制循环每帧强制等待第二轮六舵机应答
-    if(current_cache_ma_.size() != raw->size()) current_cache_ma_.assign(raw->size(), 0U);
+    const auto joint_ids = servo_ids();
+    if(current_cache_ma_.size() != joint_count) current_cache_ma_.assign(joint_count, 0U);
     if(read_cycle_count_ % cfg_.current_read_divider == 0U) {
-        const auto currents = protocol_->sync_read_currents(ids, cfg_.read_timeout);
-        if(currents && currents->size() == raw->size()) current_cache_ma_ = *currents;
+        const auto currents = protocol_->sync_read_currents(joint_ids, cfg_.read_timeout);
+        if(currents && currents->size() == joint_count) current_cache_ma_ = *currents;
     }
-    for(std::size_t i = 0; i < raw->size(); ++i) (*raw)[i].current_raw_ma = current_cache_ma_[i];
+    for(std::size_t i = 0; i < joint_count; ++i) (*raw)[i].current_raw_ma = current_cache_ma_[i];
     ++read_cycle_count_;
 
     ActuatorState state;
-    state.pos.resize(raw->size());
-    state.vel.resize(raw->size());
-    state.tor.assign(raw->size(), 0.0);
-    state.online.assign(raw->size(), 1U);
+    state.pos.resize(joint_count);
+    state.vel.resize(joint_count);
+    state.tor.assign(joint_count, 0.0);
+    state.online.assign(joint_count, 1U);
     state.enabled = enabled_;
-    state.err_code.resize(raw->size());
+    state.err_code.resize(joint_count);
 
-    for(std::size_t i = 0; i < raw->size(); ++i) {
+    for(std::size_t i = 0; i < joint_count; ++i) {
         if((*raw)[i].id != cfg_.actuators[i].servo_id ||
             (*raw)[i].position_raw < HX10HM_MIN_ABSOLUTE_POSITION_RAW ||
             (*raw)[i].position_raw > HX10HM_MAX_ABSOLUTE_POSITION_RAW) {
@@ -368,11 +449,48 @@ tl::expected<ActuatorState, MotorBusErr> Hx10hmMotorBus::read() {
         state.err_code[i] = static_cast<int>((*raw)[i].fault);
     }
 
+    if(cfg_.tool_button.enabled) {
+        const auto& tool_raw = (*raw)[joint_count];
+        if(tool_raw.id != cfg_.tool_button.servo_id ||
+            tool_raw.position_raw < HX10HM_MIN_ABSOLUTE_POSITION_RAW ||
+            tool_raw.position_raw > HX10HM_MAX_ABSOLUTE_POSITION_RAW) {
+            tool_button_state_.online = false;
+            return tl::make_unexpected(MotorBusErr::INVALID_STATE);
+        }
+
+        const auto encoder_raw = normalize_position_raw(
+            static_cast<std::int32_t>(tool_raw.position_raw),
+            tool_button_position_calibration_raw_);
+        const double pos_rad = raw_position_to_rad(
+            encoder_raw,
+            tool_button_encoder_zero_raw_,
+            cfg_.tool_button.direction);
+        const double vel_rad_s = raw_velocity_to_rad_per_second(
+            tool_raw.velocity_raw,
+            cfg_.tool_button.direction);
+        if(!std::isfinite(pos_rad) || !std::isfinite(vel_rad_s)) {
+            tool_button_state_.online = false;
+            return tl::make_unexpected(MotorBusErr::INVALID_STATE);
+        }
+
+        tool_button_state_.pos_rad = pos_rad;
+        tool_button_state_.vel_rad_s = vel_rad_s;
+        tool_button_state_.pressed = update_tool_button_pressed(
+            tool_button_state_.pressed,
+            pos_rad,
+            cfg_.tool_button.press_threshold_rad,
+            cfg_.tool_button.release_threshold_rad);
+        tool_button_state_.online = true;
+        if(tool_raw.fault != 0U) {
+            return tl::make_unexpected(MotorBusErr::ACTUATOR_FAULT);
+        }
+    }
+
     if(!finite_vector(state.pos) || !finite_vector(state.vel) || !finite_vector(state.tor)) {
         return tl::make_unexpected(MotorBusErr::INVALID_STATE);
     }
 
-    raw_states_ = *raw;
+    raw_states_.assign(raw->begin(), raw->begin() + static_cast<std::ptrdiff_t>(joint_count));
     online_ = state.online;
     last_feedback_time_ = Clock::now();
     last_state_ = state;
@@ -389,9 +507,9 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::activate() {
     // connect() 已逐轴确认 Torque OFF
     // activate() 只负责在失能状态下切换运行模式，再写零 PWM 并使能
     // 避免在 connect() 后立即重复执行 Torque OFF 事务导致不必要的 ACK / 读回失败
-    for(const auto& actuator : cfg_.actuators) {
+    for(const auto id : feedback_servo_ids()) {
         const auto mode = ensure_run_mode(
-            actuator.servo_id,
+            id,
             protocol::hiwonder_bus_servo::RunMode::PwmOpenLoop);
         if(!mode) {
             safe_disable_noexcept();
@@ -449,7 +567,20 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::write(const ActuatorCtrlCmd& cmd
         return tl::make_unexpected(commands.error());
     }
 
-    const auto written = protocol_->sync_write_pwm(*commands);
+    auto all_commands = *commands;
+    if(cfg_.tool_button.enabled) {
+        const auto pwm = tool_button_pwm(tool_button_state_);
+        if(!pwm) {
+            (void)write_zero_pwm();
+            return tl::make_unexpected(pwm.error());
+        }
+        all_commands.push_back(protocol::hiwonder_bus_servo::PwmCommand{
+            cfg_.tool_button.servo_id,
+            *pwm,
+            });
+    }
+
+    const auto written = protocol_->sync_write_pwm(all_commands);
     if(!written) {
         (void)write_zero_pwm();
         return tl::make_unexpected(map_write_error(written.error()));
@@ -486,8 +617,8 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::deactivate() {
 
     bool mode_failed = false;
     if(cfg_.restore_position_mode_on_deactivate) {
-        for(const auto& actuator : cfg_.actuators) {
-            if(!ensure_run_mode(actuator.servo_id, protocol::hiwonder_bus_servo::RunMode::Position)) {
+        for(const auto id : feedback_servo_ids()) {
+            if(!ensure_run_mode(id, protocol::hiwonder_bus_servo::RunMode::Position)) {
                 mode_failed = true;
             }
         }
@@ -526,9 +657,9 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::recover() {
     }
 
     bool mode_valid = true;
-    for(const auto& actuator : cfg_.actuators) {
+    for(const auto id : feedback_servo_ids()) {
         const auto mode = protocol_->read_register(
-            actuator.servo_id,
+            id,
             protocol::hiwonder_bus_servo::RUN_MODE_ADDR,
             1U,
             cfg_.read_timeout);
@@ -616,26 +747,16 @@ tl::expected<std::int16_t, MotorBusErr> Hx10hmMotorBus::torque_to_pwm(
     }
 
     const auto& actuator = cfg_.actuators[index];
-    const double tau_joint_limited = std::clamp(
-        tau_cmd,
-        -actuator.max_effort,
-        actuator.max_effort);
-    if(std::abs(tau_joint_limited) <= actuator.torque_deadband_nm) {
-        return std::int16_t{ 0 };
-    }
-
-    const double tau_raw = static_cast<double>(actuator.direction) * tau_joint_limited;
-
-    const double pwm_unclamped = tau_raw > 0.0 ?
-        actuator.positive_gain * tau_raw + actuator.positive_offset :
-        actuator.negative_gain * tau_raw - actuator.negative_offset;
-    if(!std::isfinite(pwm_unclamped)) {
-        return tl::make_unexpected(MotorBusErr::INVALID_CMD);
-    }
-
-    const double limit = static_cast<double>(actuator.pwm_limit);
-    const double pwm_limited = std::clamp(pwm_unclamped, -limit, limit);
-    return static_cast<std::int16_t>(std::lround(pwm_limited));
+    return map_torque_to_pwm(
+        actuator.direction,
+        actuator.max_effort,
+        actuator.positive_gain,
+        actuator.negative_gain,
+        actuator.positive_offset,
+        actuator.negative_offset,
+        actuator.torque_deadband_nm,
+        actuator.pwm_limit,
+        tau_cmd);
 }
 
 /**
@@ -743,6 +864,62 @@ Hx10hmMotorBus::raw_diagnostics() const noexcept {
     return raw_states_;
 }
 
+/**
+ * @brief 返回末端回弹按钮最近状态
+ */
+const ToolButtonState& Hx10hmMotorBus::tool_button_state() const noexcept {
+    return tool_button_state_;
+}
+
+/**
+ * @brief 返回当前配置是否启用 Tool Button
+ */
+bool Hx10hmMotorBus::tool_button_enabled() const noexcept {
+    return cfg_.tool_button.enabled;
+}
+
+/**
+ * @brief 根据双阈值更新 Tool Button 按压状态
+ */
+bool Hx10hmMotorBus::update_tool_button_pressed(
+    bool pressed_previous,
+    double pos_rad,
+    double press_threshold_rad,
+    double release_threshold_rad) noexcept {
+    if(!pressed_previous) return pos_rad >= press_threshold_rad;
+    return pos_rad > release_threshold_rad;
+}
+
+/**
+ * @brief 根据 Tool Button 状态计算低扭矩零位回弹 PWM
+ */
+tl::expected<std::int16_t, MotorBusErr> Hx10hmMotorBus::tool_button_pwm(
+    const ToolButtonState& state) const {
+    if(!configured_ || !cfg_.tool_button.enabled || !state.online ||
+        !std::isfinite(state.pos_rad) || !std::isfinite(state.vel_rad_s)) {
+        return tl::make_unexpected(MotorBusErr::INVALID_STATE);
+    }
+
+    const double tau_cmd = calculate_mit_torque(
+        0.0,
+        cfg_.tool_button.kp,
+        0.0,
+        state.pos_rad,
+        cfg_.tool_button.kd,
+        0.0,
+        state.vel_rad_s);
+    return map_torque_to_pwm(
+        cfg_.tool_button.direction,
+        cfg_.tool_button.max_effort,
+        cfg_.tool_button.positive_gain,
+        cfg_.tool_button.negative_gain,
+        cfg_.tool_button.positive_offset,
+        cfg_.tool_button.negative_offset,
+        cfg_.tool_button.torque_deadband_nm,
+        cfg_.tool_button.pwm_limit,
+        tau_cmd);
+}
+
 // ! ========================= 私 有 类 方 法 实 现 ========================= ! //
 
 /**
@@ -798,6 +975,31 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::validate_cfg(const HiwonderBusCf
         }
         ids.push_back(actuator.servo_id);
     }
+
+    const auto& tool = cfg.tool_button;
+    if((tool.direction != 1 && tool.direction != -1) ||
+        tool.servo_id >= protocol::hiwonder_bus_servo::BROADCAST_ID ||
+        tool.raw_zero > HX10HM_MAX_POSITION_RAW ||
+        !std::isfinite(tool.press_threshold_rad) || !std::isfinite(tool.release_threshold_rad) ||
+        !std::isfinite(tool.kp) || !std::isfinite(tool.kd) ||
+        !std::isfinite(tool.max_effort) || !std::isfinite(tool.positive_gain) ||
+        !std::isfinite(tool.negative_gain) || !std::isfinite(tool.positive_offset) ||
+        !std::isfinite(tool.negative_offset) || !std::isfinite(tool.torque_deadband_nm) ||
+        tool.release_threshold_rad < 0.0 ||
+        tool.press_threshold_rad <= tool.release_threshold_rad ||
+        tool.press_threshold_rad > positive_half_turn ||
+        tool.kp < 0.0 || tool.kd < 0.0 || tool.max_effort <= 0.0 ||
+        tool.positive_gain <= 0.0 || tool.negative_gain <= 0.0 ||
+        tool.positive_offset < 0.0 || tool.negative_offset < 0.0 ||
+        tool.torque_deadband_nm < 0.0 || tool.torque_deadband_nm > tool.max_effort ||
+        tool.pwm_limit <= 0 || tool.pwm_limit > 1000 ||
+        !std::isfinite(tool.positive_gain * tool.max_effort + tool.positive_offset) ||
+        !std::isfinite(tool.negative_gain * -tool.max_effort - tool.negative_offset)) {
+        return tl::make_unexpected(MotorBusErr::INVALID_CFG);
+    }
+    if(tool.enabled && std::find(ids.begin(), ids.end(), tool.servo_id) != ids.end()) {
+        return tl::make_unexpected(MotorBusErr::INVALID_CFG);
+    }
     return {};
 }
 
@@ -812,15 +1014,30 @@ std::vector<std::uint8_t> Hx10hmMotorBus::servo_ids() const {
 }
 
 /**
+ * @brief 获取当前总线上需要参与实时状态读取的全部舵机 ID
+ */
+std::vector<std::uint8_t> Hx10hmMotorBus::feedback_servo_ids() const {
+    auto ids = servo_ids();
+    if(cfg_.tool_button.enabled) ids.push_back(cfg_.tool_button.servo_id);
+    return ids;
+}
+
+/**
  * @brief 同步下发六轴零 PWM
  */
 tl::expected<void, MotorBusErr> Hx10hmMotorBus::write_zero_pwm() {
     if(!protocol_) return tl::make_unexpected(MotorBusErr::NOT_CONNECTED);
 
     std::vector<protocol::hiwonder_bus_servo::PwmCommand> commands;
-    commands.reserve(cfg_.actuators.size());
+    commands.reserve(cfg_.actuators.size() + (cfg_.tool_button.enabled ? 1U : 0U));
     for(const auto& actuator : cfg_.actuators) {
         commands.push_back(protocol::hiwonder_bus_servo::PwmCommand{ actuator.servo_id, 0 });
+    }
+    if(cfg_.tool_button.enabled) {
+        commands.push_back(protocol::hiwonder_bus_servo::PwmCommand{
+            cfg_.tool_button.servo_id,
+            0,
+            });
     }
     const auto written = protocol_->sync_write_pwm(commands);
     if(!written) return tl::make_unexpected(map_write_error(written.error()));
@@ -835,9 +1052,10 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::set_all_torque(bool enable) {
 
     bool failed = false;
     MotorBusErr first_error = enable ? MotorBusErr::ENABLE_FAILED : MotorBusErr::DISABLE_FAILED;
-    for(std::size_t i = 0; i < cfg_.actuators.size(); ++i) {
+    const auto ids = feedback_servo_ids();
+    for(std::size_t i = 0; i < ids.size(); ++i) {
         const auto result = protocol_->set_torque_enable(
-            cfg_.actuators[i].servo_id,
+            ids[i],
             enable,
             cfg_.write_timeout);
         if(!result) {
@@ -846,7 +1064,7 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::set_all_torque(bool enable) {
         }
         else {
             const auto confirmed = protocol_->read_register(
-                cfg_.actuators[i].servo_id,
+                ids[i],
                 protocol::hiwonder_bus_servo::TORQUE_ENABLE_ADDR,
                 1U,
                 cfg_.read_timeout);
@@ -858,7 +1076,7 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::set_all_torque(bool enable) {
                 }
                 failed = true;
             }
-            else if(i < enabled_.size()) {
+            else if(i < cfg_.actuators.size() && i < enabled_.size()) {
                 enabled_[i] = enable ? 1U : 0U;
             }
         }
@@ -922,6 +1140,45 @@ MotorBusErr Hx10hmMotorBus::map_write_error(protocol::hiwonder_bus_servo::Err er
 }
 
 /**
+ * @brief 使用统一 Torque -> PWM 规则完成独立执行器映射
+ */
+tl::expected<std::int16_t, MotorBusErr> Hx10hmMotorBus::map_torque_to_pwm(
+    int direction,
+    double max_effort,
+    double positive_gain,
+    double negative_gain,
+    double positive_offset,
+    double negative_offset,
+    double torque_deadband_nm,
+    std::int16_t pwm_limit,
+    double tau_cmd) noexcept {
+    if((direction != 1 && direction != -1) || !std::isfinite(max_effort) ||
+        !std::isfinite(positive_gain) || !std::isfinite(negative_gain) ||
+        !std::isfinite(positive_offset) || !std::isfinite(negative_offset) ||
+        !std::isfinite(torque_deadband_nm) || !std::isfinite(tau_cmd) ||
+        max_effort <= 0.0 || positive_gain <= 0.0 || negative_gain <= 0.0 ||
+        positive_offset < 0.0 || negative_offset < 0.0 || torque_deadband_nm < 0.0 ||
+        torque_deadband_nm > max_effort || pwm_limit <= 0 || pwm_limit > 1000) {
+        return tl::make_unexpected(MotorBusErr::INVALID_CMD);
+    }
+
+    const double tau_limited = std::clamp(tau_cmd, -max_effort, max_effort);
+    if(std::abs(tau_limited) <= torque_deadband_nm) return std::int16_t{ 0 };
+
+    const double tau_raw = static_cast<double>(direction) * tau_limited;
+    const double pwm_unclamped = tau_raw > 0.0 ?
+        positive_gain * tau_raw + positive_offset :
+        negative_gain * tau_raw - negative_offset;
+    if(!std::isfinite(pwm_unclamped)) {
+        return tl::make_unexpected(MotorBusErr::INVALID_CMD);
+    }
+
+    const double limit = static_cast<double>(pwm_limit);
+    const double pwm_limited = std::clamp(pwm_unclamped, -limit, limit);
+    return static_cast<std::int16_t>(std::lround(pwm_limited));
+}
+
+/**
  * @brief 尽力零 PWM 并 Torque OFF
  */
 void Hx10hmMotorBus::safe_disable_noexcept() noexcept {
@@ -952,6 +1209,9 @@ void Hx10hmMotorBus::release_connection_noexcept(bool keep_config) noexcept {
     current_cache_ma_.clear();
     position_calibration_raw_.clear();
     encoder_zero_raw_.clear();
+    tool_button_state_ = ToolButtonState{};
+    tool_button_position_calibration_raw_ = 0;
+    tool_button_encoder_zero_raw_ = 0U;
     read_cycle_count_ = 0U;
     last_state_ = ActuatorState{};
     last_feedback_time_ = TimePoint{};

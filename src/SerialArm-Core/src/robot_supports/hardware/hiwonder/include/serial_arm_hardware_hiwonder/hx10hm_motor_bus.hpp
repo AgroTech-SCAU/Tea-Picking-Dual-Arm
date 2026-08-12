@@ -46,6 +46,37 @@ struct HiwonderActuatorCfg {
 };
 
 /**
+ * @brief HX-10HM 末端回弹按钮配置
+ */
+struct HiwonderToolButtonCfg {
+    bool enabled{ false };                    ///< 是否启用末端回弹按钮
+    std::uint8_t servo_id{ 7 };               ///< 末端舵机 ID
+    std::uint16_t raw_zero{ 2048 };           ///< 按钮释放零位在 HX 校正后 0x38 坐标中的位置
+    int direction{ 1 };                       ///< 按压方向，只允许 +1 或 -1，配置后按下方向统一为 q > 0
+    double press_threshold_rad{ 0.20 };       ///< 按下触发阈值，rad
+    double release_threshold_rad{ 0.12 };     ///< 松开释放阈值，rad
+    double kp{ 0.10 };                        ///< 零位虚拟弹簧刚度，N·m/rad
+    double kd{ 0.01 };                        ///< 零位虚拟弹簧阻尼，N·m·s/rad
+    double max_effort{ 0.08 };                ///< Tool Button 独立力矩上限，N·m
+    double positive_gain{ 1019.716213 };      ///< 正向力矩到 PWM 增益
+    double negative_gain{ 1019.716213 };      ///< 负向力矩到 PWM 增益
+    double positive_offset{ 0.0 };            ///< 正向 PWM 启动偏置
+    double negative_offset{ 0.0 };            ///< 负向 PWM 启动偏置
+    double torque_deadband_nm{ 0.0 };         ///< Tool Button 力矩死区，N·m
+    std::int16_t pwm_limit{ 80 };             ///< Tool Button 独立 PWM 安全限幅
+};
+
+/**
+ * @brief HX-10HM 末端回弹按钮运行状态
+ */
+struct ToolButtonState {
+    double pos_rad{ 0.0 };       ///< 相对释放零位的位置，rad，按压方向统一为正
+    double vel_rad_s{ 0.0 };     ///< 按压方向统一后的速度，rad/s
+    bool pressed{ false };       ///< 带滞回的二值按压状态
+    bool online{ false };        ///< 最近一次实时读取是否成功
+};
+
+/**
  * @brief HX-10HM 总线配置
  */
 struct HiwonderBusCfg {
@@ -61,6 +92,7 @@ struct HiwonderBusCfg {
     HiwonderVelocityEncoding velocity_encoding{ HiwonderVelocityEncoding::Bit15SignMagnitude }; ///< 速度编码
     std::string torque_feedback_mode{ "unavailable_zero" }; ///< 未标定力矩反馈策略
     std::vector<HiwonderActuatorCfg> actuators;      ///< 固定六个执行器配置
+    HiwonderToolButtonCfg tool_button;               ///< 可选末端回弹按钮配置，不属于 Robot joint
 };
 
 // ! ========================= 接 口 类 / 函 数 声 明 ========================= ! //
@@ -238,6 +270,40 @@ public:
     const std::vector<protocol::hiwonder_bus_servo::RawState>&
     raw_diagnostics() const noexcept;
 
+    /**
+     * @brief 返回末端回弹按钮最近状态
+     * @return Tool Button 只读状态
+     */
+    const ToolButtonState& tool_button_state() const noexcept;
+
+    /**
+     * @brief 返回当前配置是否启用 Tool Button
+     * @return true 表示启用
+     */
+    bool tool_button_enabled() const noexcept;
+
+    /**
+     * @brief 根据双阈值更新 Tool Button 按压状态
+     * @param pressed_previous 上一周期按压状态
+     * @param pos_rad 当前按钮位置，rad，按压方向为正
+     * @param press_threshold_rad 按下阈值，rad
+     * @param release_threshold_rad 松开阈值，rad
+     * @return 更新后的按压状态
+     */
+    static bool update_tool_button_pressed(
+        bool pressed_previous,
+        double pos_rad,
+        double press_threshold_rad,
+        double release_threshold_rad) noexcept;
+
+    /**
+     * @brief 根据 Tool Button 状态计算低扭矩零位回弹 PWM
+     * @param state 当前 Tool Button 状态
+     * @return 成功时返回有符号 PWM，否则返回错误码
+     */
+    tl::expected<std::int16_t, MotorBusErr> tool_button_pwm(
+        const ToolButtonState& state) const;
+
 private:
     /**
      * @brief 验证 Backend 配置
@@ -251,6 +317,12 @@ private:
      * @return 舵机 ID 列表
      */
     std::vector<std::uint8_t> servo_ids() const;
+
+    /**
+     * @brief 获取当前总线上需要参与实时状态读取的全部舵机 ID
+     * @return 六轴舵机 ID，启用 Tool Button 时末尾追加其 ID
+     */
+    std::vector<std::uint8_t> feedback_servo_ids() const;
 
     /**
      * @brief 同步下发六轴零 PWM
@@ -290,6 +362,21 @@ private:
     static MotorBusErr map_write_error(protocol::hiwonder_bus_servo::Err error) noexcept;
 
     /**
+     * @brief 使用统一 Torque -> PWM 规则完成独立执行器映射
+     * @return 成功时返回有符号 PWM，否则返回 INVALID_CMD
+     */
+    static tl::expected<std::int16_t, MotorBusErr> map_torque_to_pwm(
+        int direction,
+        double max_effort,
+        double positive_gain,
+        double negative_gain,
+        double positive_offset,
+        double negative_offset,
+        double torque_deadband_nm,
+        std::int16_t pwm_limit,
+        double tau_cmd) noexcept;
+
+    /**
      * @brief 尽力零 PWM 并 Torque OFF
      */
     void safe_disable_noexcept() noexcept;
@@ -316,6 +403,9 @@ private:
     std::vector<std::uint16_t> current_cache_ma_;            ///< 低频电流诊断缓存，控制环不依赖该值
     std::vector<std::int16_t> position_calibration_raw_;     ///< connect() 从 0x1F 读取的位置校正参数
     std::vector<std::uint16_t> encoder_zero_raw_;            ///< raw_zero 加位置校正后恢复的单圈零位
+    ToolButtonState tool_button_state_;                      ///< Tool Button 最近状态，不进入 Robot ActuatorState
+    std::int16_t tool_button_position_calibration_raw_{ 0 }; ///< Tool Button 0x1F 位置校正参数
+    std::uint16_t tool_button_encoder_zero_raw_{ 0 };        ///< Tool Button 恢复后的单圈零位
     std::size_t read_cycle_count_{ 0 };                      ///< read() 调用计数，用于诊断分频
     TimePoint last_feedback_time_{};                         ///< 最近六轴同步反馈时间
     bool configured_{ false };                               ///< 是否已配置

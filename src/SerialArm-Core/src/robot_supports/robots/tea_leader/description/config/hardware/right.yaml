@@ -3,7 +3,8 @@
 # 目录
 # 01 serial            串口与读写时序
 # 02 feedback          反馈解析与诊断频率
-# 03 actuators         舵机 ID、零位、方向和 Software MIT 限幅
+# 03 tool_button       末端回弹按钮（可选）
+# 04 actuators         舵机 ID、零位、方向和 Software MIT 限幅
 #
 # 说明
 # - 此文件只配置 HX-10HM Hardware Backend
@@ -29,7 +30,27 @@ hiwonder:
   torque_feedback_mode: unavailable_zero # 尚未完成电流到真实关节力矩标定，tau_feedback 返回 0
   restore_position_mode_on_deactivate: false # 失能后不改写非易失运行模式，避免频繁写 NVS
 
-  # 03 actuators
+  # 03 tool_button
+  # Tool Button 与 Joint1~Joint6 复用同一个 HiwonderBusServo / SerialPort
+  # 默认关闭以保持未安装 ID7 时原六轴行为不变，安装并完成零位检查后改为 true
+  tool_button:
+    enabled: false
+    servo_id: 7
+    raw_zero: 2048
+    direction: 1
+    press_threshold_rad: 0.20
+    release_threshold_rad: 0.12
+    kp: 0.10
+    kd: 0.01
+    max_effort: 0.08
+    positive_gain: 1019.716213
+    negative_gain: 1019.716213
+    positive_offset: 0.0
+    negative_offset: 0.0
+    torque_deadband_nm: 0.0
+    pwm_limit: 80
+
+  # 04 actuators
   # 公共参数说明
   # servo_id             总线舵机 ID
   # raw_zero             机械零位在 HX 位置校正后的 0x38 坐标值；Backend 会读取 0x1F 并自动恢复 0~4095 单圈编码器坐标

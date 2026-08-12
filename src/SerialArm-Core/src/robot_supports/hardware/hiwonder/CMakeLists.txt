@@ -58,9 +58,22 @@ target_compile_options(serial_arm_hiwonder_calibration
         $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
 )
 
+add_executable(serial_arm_hiwonder_tool_button
+    app/serial_arm_hiwonder_tool_button.cpp
+)
+target_link_libraries(serial_arm_hiwonder_tool_button
+    PRIVATE
+        serial_arm_hardware_hiwonder
+)
+target_compile_options(serial_arm_hiwonder_tool_button
+    PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic>
+)
+
 install(TARGETS
     serial_arm_hardware_hiwonder
     serial_arm_hiwonder_calibration
+    serial_arm_hiwonder_tool_button
     EXPORT serial_arm_hardware_hiwonder_targets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -133,6 +146,9 @@ if(BUILD_TESTING)
     add_test(NAME serial_arm_hardware_hiwonder_tests COMMAND serial_arm_hardware_hiwonder_tests)
     add_test(NAME serial_arm_hiwonder_calibration_help
         COMMAND serial_arm_hiwonder_calibration --help
+    )
+    add_test(NAME serial_arm_hiwonder_tool_button_help
+        COMMAND serial_arm_hiwonder_tool_button --help
     )
     add_test(NAME serial_arm_hiwonder_calibration_requires_confirmation
         COMMAND serial_arm_hiwonder_calibration
