@@ -19,6 +19,10 @@ namespace {
 constexpr std::size_t MIN_PACKET_SIZE = 6;
 constexpr std::size_t MAX_PARAMETER_SIZE = 253;
 constexpr std::size_t STATE_BLOCK_SIZE = 10;
+constexpr std::uint16_t DIRECTION_BIT_15 = 0x8000;
+constexpr std::uint16_t MAGNITUDE_MASK_15 = 0x7FFF;
+constexpr std::uint16_t DIRECTION_BIT_11 = 0x0800;
+constexpr std::uint16_t MAGNITUDE_MASK_11 = 0x07FF;
 constexpr std::uint16_t DIRECTION_BIT_10 = 0x0400;
 constexpr std::uint16_t MAGNITUDE_MASK_10 = 0x03FF;
 
@@ -75,10 +79,19 @@ std::uint16_t decode_u16_le(const Buffer& data, std::size_t offset) noexcept {
 }
 
 /**
- * @brief 按低字节在前解码 16 位有符号数
+ * @brief 按 BIT15 方向位解码符号幅值
  */
-std::int16_t decode_i16_le(const Buffer& data, std::size_t offset) noexcept {
-    return static_cast<std::int16_t>(decode_u16_le(data, offset));
+std::int16_t decode_signed_magnitude_15(std::uint16_t wire) noexcept {
+    const auto magnitude = static_cast<std::int16_t>(wire & MAGNITUDE_MASK_15);
+    return (wire & DIRECTION_BIT_15) != 0U ? static_cast<std::int16_t>(-magnitude) : magnitude;
+}
+
+/**
+ * @brief 按 BIT11 方向位解码 HX-10HM 位置校正参数
+ */
+std::int16_t decode_signed_magnitude_11(std::uint16_t wire) noexcept {
+    const auto magnitude = static_cast<std::int16_t>(wire & MAGNITUDE_MASK_11);
+    return (wire & DIRECTION_BIT_11) != 0U ? static_cast<std::int16_t>(-magnitude) : magnitude;
 }
 
 /**
@@ -253,7 +266,7 @@ tl::expected<RawState, Err> decode_state_block(
 
     RawState state;
     state.id = state_packet.id;
-    state.position_raw = decode_i16_le(state_packet.parameters, 0U);
+    state.position_raw = decode_signed_magnitude_15(decode_u16_le(state_packet.parameters, 0U));
     state.velocity_raw = decode_u16_le(state_packet.parameters, 2U);
     state.load_raw = decode_signed_magnitude_10(decode_u16_le(state_packet.parameters, 4U));
     state.voltage_raw = state_packet.parameters[6];
@@ -438,7 +451,20 @@ tl::expected<std::int16_t, Err> HiwonderBusServo::read_position(
     std::chrono::milliseconds timeout) {
     const auto data = read_register(id, PRESENT_POSITION_ADDR, 2U, timeout);
     if(!data) return tl::make_unexpected(data.error());
-    return decode_i16_le(*data, 0U);
+    return decode_signed_magnitude_15(decode_u16_le(*data, 0U));
+}
+
+/**
+ * @brief 读取位置校正参数
+ */
+tl::expected<std::int16_t, Err> HiwonderBusServo::read_position_calibration(
+    std::uint8_t id,
+    std::chrono::milliseconds timeout) {
+    const auto data = read_register(id, POSITION_CALIBRATION_ADDR, 2U, timeout);
+    if(!data) return tl::make_unexpected(data.error());
+    const auto value = decode_signed_magnitude_11(decode_u16_le(*data, 0U));
+    if(value < -2047 || value > 2047) return tl::make_unexpected(Err::MALFORMED_PACKET);
+    return value;
 }
 
 /**

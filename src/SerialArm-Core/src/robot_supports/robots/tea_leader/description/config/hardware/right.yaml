@@ -22,6 +22,8 @@ hiwonder:
   read_retry_count: 1                    # SYNC READ 瞬态失败后的额外重试次数
 
   # 02 feedback
+  # 位置校正无需在 YAML 重复填写，connect() 会逐轴读取 0x1F Position Calibration
+  # 例如某轴校正为 +1825 时，HX 可能报告 -1825~2270，Backend 会恢复为统一 0~4095
   current_read_divider: 10               # 电流诊断分频，100 Hz 控制下约 10 Hz 更新一次电流
   velocity_encoding: bit15_sign_magnitude # HX 速度寄存器符号编码方式
   torque_feedback_mode: unavailable_zero # 尚未完成电流到真实关节力矩标定，tau_feedback 返回 0
@@ -30,7 +32,7 @@ hiwonder:
   # 03 actuators
   # 公共参数说明
   # servo_id             总线舵机 ID
-  # raw_zero             机械零位对应的原始位置值，当前六轴均为 2048
+  # raw_zero             机械零位在 HX 位置校正后的 0x38 坐标值；Backend 会读取 0x1F 并自动恢复 0~4095 单圈编码器坐标
   # direction            执行器原始正方向到 SerialArm 执行器正方向的符号
   # min_pos/max_pos      当前执行器单圈软件范围 rad，不等同机构最终机械硬限位
   # max_vel              执行器侧最大速度 rad/s

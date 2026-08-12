@@ -176,7 +176,7 @@ TEST(HiwonderPacketTests, DecodesSignedAbsolutePosition) {
         1U,
         0U,
         {
-            0xFF, 0xFF,
+            0x01, 0x80,
             0x00, 0x00,
             0x00, 0x00,
             0x78,
@@ -190,6 +190,49 @@ TEST(HiwonderPacketTests, DecodesSignedAbsolutePosition) {
     const auto state = hiwonder::decode_raw_state(state_packet, current_packet);
     ASSERT_TRUE(state);
     EXPECT_EQ(state->position_raw, -1);
+}
+
+TEST(HiwonderBusServoTests, ReadsPositionCalibrationWithBit11Sign) {
+    Pty pty;
+    auto serial = open_serial(pty);
+    hiwonder::HiwonderBusServo bus(serial);
+    bool responder_ok = true;
+
+    std::thread responder([&]() {
+        Buffer request;
+        responder_ok = read_exact_fd(pty.master(), request, 8U);
+        if(!responder_ok) return;
+        responder_ok = request[5] == hiwonder::POSITION_CALIBRATION_ADDR && request[6] == 2U;
+        if(!responder_ok) return;
+        const auto positive = status_packet(4U, 0U, { 0x21, 0x07 });
+        responder_ok = ::write(pty.master(), positive.data(), positive.size()) ==
+            static_cast<ssize_t>(positive.size());
+        });
+
+    const auto calibration = bus.read_position_calibration(4U, std::chrono::milliseconds(20));
+    responder.join();
+    ASSERT_TRUE(responder_ok);
+    ASSERT_TRUE(calibration);
+    EXPECT_EQ(*calibration, 1825);
+}
+
+TEST(HiwonderBusServoTests, ReadsNegativePositionCalibrationWithBit11Sign) {
+    Pty pty;
+    auto serial = open_serial(pty);
+    hiwonder::HiwonderBusServo bus(serial);
+
+    std::thread responder([&]() {
+        Buffer request;
+        ASSERT_TRUE(read_exact_fd(pty.master(), request, 8U));
+        const auto negative = status_packet(4U, 0U, { 0x21, 0x0F });
+        ASSERT_EQ(::write(pty.master(), negative.data(), negative.size()),
+            static_cast<ssize_t>(negative.size()));
+        });
+
+    const auto calibration = bus.read_position_calibration(4U, std::chrono::milliseconds(20));
+    responder.join();
+    ASSERT_TRUE(calibration);
+    EXPECT_EQ(*calibration, -1825);
 }
 
 TEST(HiwonderPacketTests, RejectsMalformedPackets) {

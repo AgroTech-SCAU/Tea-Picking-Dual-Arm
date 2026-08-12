@@ -29,7 +29,7 @@ struct HiwonderActuatorCfg {
     std::string name;              ///< 执行器名称
     std::string joint_name;        ///< 关联关节名称
     std::uint8_t servo_id{ 0 };    ///< 舵机 ID
-    std::uint16_t raw_zero{ 2048 }; ///< 关节零位对应的原始位置
+    std::uint16_t raw_zero{ 2048 }; ///< 关节零位在 HX 校正后 0x38 坐标中的位置
     int direction{ 1 };            ///< 机械关节方向，只允许 +1 或 -1
     double min_pos{ 0.0 };         ///< 最小位置，rad
     double max_pos{ 0.0 };         ///< 最大位置，rad
@@ -200,15 +200,25 @@ public:
         std::chrono::milliseconds feedback_age) const;
 
     /**
-     * @brief 将 HX 原始位置转换为弧度
-     * @param raw 原始位置步数
-     * @param raw_zero 零位步数
+     * @brief 使用舵机内部位置校正恢复 0~4095 单圈编码器坐标
+     * @param reported_raw 0x38 当前舵机报告位置
+     * @param position_calibration 0x1F 位置校正参数
+     * @return 归一化后的单圈位置 [0, 4095]
+     */
+    static std::uint16_t normalize_position_raw(
+        std::int32_t reported_raw,
+        std::int16_t position_calibration) noexcept;
+
+    /**
+     * @brief 将归一化单圈位置转换为关节弧度
+     * @param encoder_raw 归一化单圈位置 [0, 4095]
+     * @param encoder_zero 关节零位对应的归一化单圈位置
      * @param direction 机械方向 +1 或 -1
-     * @return 关节位置，rad
+     * @return 关节位置，rad，使用最短环形差值避免 4095/0 回绕跳变
      */
     static double raw_position_to_rad(
-        std::int16_t raw,
-        std::uint16_t raw_zero,
+        std::uint16_t encoder_raw,
+        std::uint16_t encoder_zero,
         int direction) noexcept;
 
     /**
@@ -304,6 +314,8 @@ private:
     std::vector<std::uint8_t> online_;                       ///< 执行器在线状态
     std::vector<std::uint8_t> enabled_;                      ///< 执行器使能状态
     std::vector<std::uint16_t> current_cache_ma_;            ///< 低频电流诊断缓存，控制环不依赖该值
+    std::vector<std::int16_t> position_calibration_raw_;     ///< connect() 从 0x1F 读取的位置校正参数
+    std::vector<std::uint16_t> encoder_zero_raw_;            ///< raw_zero 加位置校正后恢复的单圈零位
     std::size_t read_cycle_count_{ 0 };                      ///< read() 调用计数，用于诊断分频
     TimePoint last_feedback_time_{};                         ///< 最近六轴同步反馈时间
     bool configured_{ false };                               ///< 是否已配置

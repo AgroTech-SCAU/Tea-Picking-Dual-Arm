@@ -347,6 +347,7 @@ void write_csv_rows(
         const auto pwm = bus.torque_to_pwm(i, tau_cmd);
         csv << std::setprecision(12) << timestamp_s << ',' << i + 1U << ','
             << state.pos[i] << ',' << state.vel[i] << ',' << raw[i].position_raw << ','
+            << raw[i].position_calibration_raw << ',' << raw[i].encoder_position_raw << ','
             << raw[i].current_raw_ma << ',' << raw[i].load_raw << ','
             << tau_cmd << ',' << (pwm ? *pwm : 0) << ','
             << command.kp[i] << ',' << command.kd[i] << ','
@@ -364,6 +365,8 @@ void print_state(
     for(std::size_t i = 0; i < state.pos.size(); ++i) {
         std::cout << "J" << i + 1U << " q=" << state.pos[i]
             << " dq=" << state.vel[i] << " position_raw=" << raw[i].position_raw
+            << " position_calibration=" << raw[i].position_calibration_raw
+            << " encoder_raw=" << raw[i].encoder_position_raw
             << " current_ma=" << raw[i].current_raw_ma
             << " load_raw=" << raw[i].load_raw
             << " voltage_v=" << static_cast<double>(raw[i].voltage_raw) * 0.1
@@ -406,7 +409,8 @@ int run_loop(serial_arm::Hx10hmMotorBus& bus, const Options& options) {
             std::cerr << "failed to open CSV: " << options.csv_path << '\n';
             return EXIT_FAILURE;
         }
-        csv << "timestamp_s,joint,q_rad,dq_rad_s,position_raw,current_ma,load_raw,tau_cmd_nm,"
+        csv << "timestamp_s,joint,q_rad,dq_rad_s,position_raw,position_calibration,encoder_raw,"
+            << "current_ma,load_raw,tau_cmd_nm,"
             << "pwm_cmd,kp,kd,online,enabled,fault\n";
     }
 

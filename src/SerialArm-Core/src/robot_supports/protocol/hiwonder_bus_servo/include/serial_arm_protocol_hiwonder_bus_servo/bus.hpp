@@ -15,6 +15,7 @@ constexpr std::uint8_t WRITE_DATA = 0x03;
 constexpr std::uint8_t SYNC_READ = 0x82;
 constexpr std::uint8_t SYNC_WRITE = 0x83;
 
+constexpr std::uint8_t POSITION_CALIBRATION_ADDR = 0x1F;
 constexpr std::uint8_t RUN_MODE_ADDR = 0x21;
 constexpr std::uint8_t TORQUE_ENABLE_ADDR = 0x28;
 constexpr std::uint8_t PWM_COMMAND_ADDR = 0x2C;
@@ -78,7 +79,9 @@ struct PwmCommand {
  */
 struct RawState {
     std::uint8_t id{ 0 };                  ///< 舵机 ID
-    std::int16_t position_raw{ 0 };        ///< 0x38 有符号绝对位置步数
+    std::int16_t position_raw{ 0 };        ///< 0x38 舵机报告位置，BIT15 为符号位
+    std::int16_t position_calibration_raw{ 0 }; ///< 0x1F 位置校正，BIT11 为符号位
+    std::uint16_t encoder_position_raw{ 0 }; ///< Hardware Backend 还原后的 0~4095 单圈位置
     std::uint16_t velocity_raw{ 0 };       ///< 0x3A 原始速度字，方向编码未解释
     std::int16_t load_raw{ 0 };            ///< 0x3C 原始负载，0.1% 且 BIT10 为方向位
     std::uint8_t voltage_raw{ 0 };         ///< 0x3E 原始电压，0.1 V
@@ -287,6 +290,16 @@ public:
      * @return 0x38 的有符号绝对位置步数
      */
     tl::expected<std::int16_t, Err> read_position(
+        std::uint8_t id,
+        std::chrono::milliseconds timeout);
+
+    /**
+     * @brief 读取位置校正参数
+     * @param id 舵机 ID
+     * @param timeout 应答超时
+     * @return 0x1F 按 BIT11 方向位解码的位置校正，范围 [-2047, 2047]
+     */
+    tl::expected<std::int16_t, Err> read_position_calibration(
         std::uint8_t id,
         std::chrono::milliseconds timeout);
 

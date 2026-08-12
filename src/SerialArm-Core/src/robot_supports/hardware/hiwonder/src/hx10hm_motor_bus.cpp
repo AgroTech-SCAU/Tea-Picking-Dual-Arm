@@ -21,6 +21,8 @@ namespace serial_arm {
 namespace {
 
 constexpr std::size_t HX10HM_ACTUATOR_COUNT = 6;
+constexpr std::int32_t HX10HM_POSITION_PERIOD_RAW = 4096;
+constexpr std::int32_t HX10HM_POSITION_HALF_PERIOD_RAW = HX10HM_POSITION_PERIOD_RAW / 2;
 constexpr std::uint16_t HX10HM_MAX_POSITION_RAW = 4095;
 constexpr std::int16_t HX10HM_MIN_ABSOLUTE_POSITION_RAW = -30719;
 constexpr std::int16_t HX10HM_MAX_ABSOLUTE_POSITION_RAW = 30719;
@@ -209,6 +211,8 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::configure(const HiwonderBusCfg& 
     online_.assign(cfg_.actuators.size(), 0U);
     enabled_.assign(cfg_.actuators.size(), 0U);
     current_cache_ma_.assign(cfg_.actuators.size(), 0U);
+    position_calibration_raw_.assign(cfg_.actuators.size(), 0);
+    encoder_zero_raw_.assign(cfg_.actuators.size(), 0U);
     read_cycle_count_ = 0U;
     last_feedback_time_ = TimePoint{};
     configured_ = true;
@@ -250,6 +254,31 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::connect() {
         if(!disabled) {
             release_connection_noexcept(true);
             return tl::make_unexpected(disabled.error());
+        }
+
+        // HX-10HM 的 0x1F 位置校正会直接平移 0x38 当前坐标
+        // PWM Open-Loop 下仍然只有 4096 步单圈反馈，因此必须在 Hardware Backend
+        // 中读取每轴校正值并恢复统一的 0~4095 编码器坐标
+        position_calibration_raw_.assign(cfg_.actuators.size(), 0);
+        encoder_zero_raw_.assign(cfg_.actuators.size(), 0U);
+        for(std::size_t i = 0; i < cfg_.actuators.size(); ++i) {
+            tl::expected<std::int16_t, protocol::hiwonder_bus_servo::Err> calibration =
+                tl::make_unexpected(protocol::hiwonder_bus_servo::Err::TIMEOUT);
+            for(std::size_t attempt = 0; attempt <= cfg_.read_retry_count; ++attempt) {
+                calibration = protocol_->read_position_calibration(
+                    cfg_.actuators[i].servo_id,
+                    cfg_.read_timeout);
+                if(calibration || !retryable_read_error(calibration.error())) break;
+            }
+            if(!calibration) {
+                const auto error = map_read_error(calibration.error());
+                release_connection_noexcept(true);
+                return tl::make_unexpected(error);
+            }
+            position_calibration_raw_[i] = *calibration;
+            encoder_zero_raw_[i] = normalize_position_raw(
+                static_cast<std::int32_t>(cfg_.actuators[i].raw_zero),
+                *calibration);
         }
 
         const auto state = read();
@@ -294,6 +323,9 @@ tl::expected<ActuatorState, MotorBusErr> Hx10hmMotorBus::read() {
     if(raw->size() != cfg_.actuators.size()) {
         return tl::make_unexpected(MotorBusErr::READ_FAILED);
     }
+    if(position_calibration_raw_.size() != raw->size() || encoder_zero_raw_.size() != raw->size()) {
+        return tl::make_unexpected(MotorBusErr::INVALID_STATE);
+    }
 
     // 电流反馈当前仅用于诊断，不参与 Software MIT 或 Safety 控制
     // 将独立 0x45 SYNC READ 降频执行，并把诊断超时视为非致命事件
@@ -320,9 +352,14 @@ tl::expected<ActuatorState, MotorBusErr> Hx10hmMotorBus::read() {
             (*raw)[i].position_raw > HX10HM_MAX_ABSOLUTE_POSITION_RAW) {
             return tl::make_unexpected(MotorBusErr::INVALID_STATE);
         }
+        const auto encoder_raw = normalize_position_raw(
+            static_cast<std::int32_t>((*raw)[i].position_raw),
+            position_calibration_raw_[i]);
+        (*raw)[i].position_calibration_raw = position_calibration_raw_[i];
+        (*raw)[i].encoder_position_raw = encoder_raw;
         state.pos[i] = raw_position_to_rad(
-            (*raw)[i].position_raw,
-            cfg_.actuators[i].raw_zero,
+            encoder_raw,
+            encoder_zero_raw_[i],
             cfg_.actuators[i].direction);
         state.vel[i] = raw_velocity_to_rad_per_second(
             (*raw)[i].velocity_raw,
@@ -650,13 +687,28 @@ Hx10hmMotorBus::build_pwm_commands(
 }
 
 /**
- * @brief 将 HX 原始位置转换为弧度
+ * @brief 使用舵机内部位置校正恢复 0~4095 单圈编码器坐标
+ */
+std::uint16_t Hx10hmMotorBus::normalize_position_raw(
+    std::int32_t reported_raw,
+    std::int16_t position_calibration) noexcept {
+    std::int32_t normalized = reported_raw + static_cast<std::int32_t>(position_calibration);
+    normalized %= HX10HM_POSITION_PERIOD_RAW;
+    if(normalized < 0) normalized += HX10HM_POSITION_PERIOD_RAW;
+    return static_cast<std::uint16_t>(normalized);
+}
+
+/**
+ * @brief 将归一化单圈位置转换为弧度
  */
 double Hx10hmMotorBus::raw_position_to_rad(
-    std::int16_t raw,
-    std::uint16_t raw_zero,
+    std::uint16_t encoder_raw,
+    std::uint16_t encoder_zero,
     int direction) noexcept {
-    const auto delta = static_cast<std::int32_t>(raw) - static_cast<std::int32_t>(raw_zero);
+    std::int32_t delta = static_cast<std::int32_t>(encoder_raw) -
+        static_cast<std::int32_t>(encoder_zero);
+    if(delta > HX10HM_POSITION_HALF_PERIOD_RAW) delta -= HX10HM_POSITION_PERIOD_RAW;
+    else if(delta < -HX10HM_POSITION_HALF_PERIOD_RAW) delta += HX10HM_POSITION_PERIOD_RAW;
     return static_cast<double>(direction * delta) * RAD_PER_STEP;
 }
 
@@ -696,16 +748,18 @@ tl::expected<void, MotorBusErr> Hx10hmMotorBus::validate_cfg(const HiwonderBusCf
     }
 
     constexpr double endpoint_epsilon = 1e-9;
+    constexpr double negative_half_turn = -3.14159265358979323846;
+    constexpr double positive_half_turn = 3.14159265358979323846;
+    constexpr double positive_last_step =
+        static_cast<double>(HX10HM_POSITION_HALF_PERIOD_RAW - 1) * RAD_PER_STEP;
+    constexpr double negative_last_step = -positive_last_step;
     std::vector<std::uint8_t> ids;
     ids.reserve(cfg.actuators.size());
     for(const auto& actuator : cfg.actuators) {
-        const double endpoint_zero = raw_position_to_rad(0U, actuator.raw_zero, actuator.direction);
-        const double endpoint_max = raw_position_to_rad(
-            HX10HM_MAX_POSITION_RAW,
-            actuator.raw_zero,
-            actuator.direction);
-        const double representable_min = std::min(endpoint_zero, endpoint_max);
-        const double representable_max = std::max(endpoint_zero, endpoint_max);
+        const double representable_min = actuator.direction == 1 ?
+            negative_half_turn : negative_last_step;
+        const double representable_max = actuator.direction == 1 ?
+            positive_last_step : positive_half_turn;
         if(actuator.name.empty() || actuator.joint_name.empty() ||
             actuator.servo_id >= protocol::hiwonder_bus_servo::BROADCAST_ID ||
             actuator.raw_zero > HX10HM_MAX_POSITION_RAW ||
@@ -883,6 +937,10 @@ void Hx10hmMotorBus::release_connection_noexcept(bool keep_config) noexcept {
     raw_states_.clear();
     online_.clear();
     enabled_.clear();
+    current_cache_ma_.clear();
+    position_calibration_raw_.clear();
+    encoder_zero_raw_.clear();
+    read_cycle_count_ = 0U;
     last_state_ = ActuatorState{};
     last_feedback_time_ = TimePoint{};
     connected_ = false;

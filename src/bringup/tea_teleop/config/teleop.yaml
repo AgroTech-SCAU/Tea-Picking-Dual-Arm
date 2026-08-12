@@ -18,7 +18,7 @@ follower:
 
 teleop:
   duration_s: -1                          # -1 表示持续运行到 Ctrl+C，正整数表示最长运行秒数
-  period_ms: 8                            # 从臂发送周期 ms
+  period_ms: 10                           # 从臂发送周期 ms
   slow_max_step_degree: 1.0               # 慢速遥操作每周期最大关节变化量 deg
   max_start_error_degree: 30.0            # 启动遥操作时允许的主从最大关节角差 deg
   mapping_direction: [-1, 1, -1, 1, 1, 1] # 主臂关节角映射到 RM65-B 的方向，仅属于遥操作坐标映射

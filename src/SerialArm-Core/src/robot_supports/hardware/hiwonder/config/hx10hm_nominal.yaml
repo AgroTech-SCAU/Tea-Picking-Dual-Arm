@@ -14,7 +14,8 @@
 # - pwm_limit = 300
 # - max_kp = 1.0，max_kd = 0.1
 #
-# 位置反馈采用 16 位有符号绝对位置；当前 min/max 仍是单圈执行器级临时范围
+# connect() 会读取每轴 0x1F 位置校正，并将 0x38 当前坐标恢复为 0..4095 单圈编码器坐标
+# raw_zero 仍填写舵机校正后的机械零位读数，Backend 会对零位应用同一校正
 
 hiwonder:
   serial_port: /dev/ttyACM0

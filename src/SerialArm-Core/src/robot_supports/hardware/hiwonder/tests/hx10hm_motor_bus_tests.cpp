@@ -184,11 +184,26 @@ TEST(Hx10hmMotorBusConversionTests, AppliesRawZeroAndDirectionToPosition) {
         -100.0 * RAD_PER_STEP, 1e-12);
 }
 
-TEST(Hx10hmMotorBusConversionTests, AcceptsSignedAbsolutePositionFeedback) {
-    EXPECT_NEAR(serial_arm::Hx10hmMotorBus::raw_position_to_rad(4096, 2048U, 1),
-        2048.0 * RAD_PER_STEP, 1e-12);
-    EXPECT_NEAR(serial_arm::Hx10hmMotorBus::raw_position_to_rad(-1, 2048U, 1),
-        -2049.0 * RAD_PER_STEP, 1e-12);
+TEST(Hx10hmMotorBusConversionTests, RestoresEncoderCoordinateFromServoCalibration) {
+    EXPECT_EQ(serial_arm::Hx10hmMotorBus::normalize_position_raw(-1825, 1825), 0U);
+    EXPECT_EQ(serial_arm::Hx10hmMotorBus::normalize_position_raw(0, 1825), 1825U);
+    EXPECT_EQ(serial_arm::Hx10hmMotorBus::normalize_position_raw(2270, 1825), 4095U);
+}
+
+TEST(Hx10hmMotorBusConversionTests, KeepsPositionContinuousAcrossCalibrationWrap) {
+    const auto encoder_zero = serial_arm::Hx10hmMotorBus::normalize_position_raw(2048, 1825);
+    ASSERT_EQ(encoder_zero, 3873U);
+
+    const auto before = serial_arm::Hx10hmMotorBus::normalize_position_raw(2270, 1825);
+    const auto after = serial_arm::Hx10hmMotorBus::normalize_position_raw(-1825, 1825);
+    const double q_before = serial_arm::Hx10hmMotorBus::raw_position_to_rad(
+        before, encoder_zero, 1);
+    const double q_after = serial_arm::Hx10hmMotorBus::raw_position_to_rad(
+        after, encoder_zero, 1);
+
+    EXPECT_NEAR(q_before, 222.0 * RAD_PER_STEP, 1e-12);
+    EXPECT_NEAR(q_after, 223.0 * RAD_PER_STEP, 1e-12);
+    EXPECT_NEAR(q_after - q_before, RAD_PER_STEP, 1e-12);
 }
 
 TEST(Hx10hmMotorBusConversionTests, DecodesVelocityBit15AndDirection) {

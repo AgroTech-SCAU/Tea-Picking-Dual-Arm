@@ -21,13 +21,15 @@ share/serial_arm_hardware_hiwonder/config/hx10hm_nominal.yaml
 
 ## 位置反馈说明
 
-HX-10HM 的 `0x38` 当前位置信息按 16 位有符号绝对位置处理
+HX-10HM 的 `0x1F` 为位置校正寄存器，范围 `[-2047, 2047]`，BIT11 为方向位
 
-厂家资料中单圈 `0..4095` 对应 `0..360°`，绝对位置相关范围可扩展到约 `-30719..30719` 步
+位置校正会平移 `0x38` 当前坐标，例如校正为 `+1825` 时，PWM Open-Loop 下单圈反馈可能表现为 `-1825..2270`
 
-因此 Backend 不再把 `position_raw > 4095` 直接判定为非法状态，避免关节跨过单圈边界后误报 `INVALID_STATE`
+Backend 在 `connect()` 时逐轴读取 `0x1F`，再用 `wrap4096(position_raw + position_calibration)` 恢复统一的 `0..4095` 单圈编码器坐标
 
-当前 `raw_zero=2048` 与执行器级 `[-π, π)` 配置仍保留，用于主臂零位和初始安全范围定义
+因此不需要在 YAML 重复维护位置校正值，也不需要针对某个舵机写特殊分支
+
+`raw_zero` 仍填写机械零位在 HX 校正后 `0x38` 坐标中的读数，通常为 `2048`，Backend 会对零位应用同一位置校正后再计算关节角
 
 ## 常用命令
 
@@ -59,7 +61,7 @@ serial_arm_hiwonder_calibration \
 CSV 字段：
 
 ```text
-timestamp_s,joint,q_rad,dq_rad_s,position_raw,current_ma,load_raw,tau_cmd_nm,pwm_cmd,kp,kd,online,enabled,fault
+timestamp_s,joint,q_rad,dq_rad_s,position_raw,position_calibration,encoder_raw,current_ma,load_raw,tau_cmd_nm,pwm_cmd,kp,kd,online,enabled,fault
 ```
 
 ## 通信稳定性
