@@ -86,3 +86,64 @@ current_read_divider: 10
 
 这些参数用于吸收 USB CDC、线程调度和舵机应答的短时抖动，不应被用来掩盖持续掉线、供电异常或物理总线故障
 
+
+## Tea Leader Tool Button
+
+Tea Leader 可以在 Joint1~Joint6 之外增加一只 HX-10HM 作为可按压回弹的 Tool Button
+
+Tool Button 不是第 7 个 SerialArm Robot joint，不改变 MotorBus 六轴 Contract
+
+Hardware YAML 中使用独立配置块
+
+```yaml
+hiwonder:
+  tool_button:
+    enabled: false
+    servo_id: 7
+    raw_zero: 2048
+    direction: 1
+    press_threshold_rad: 0.20
+    release_threshold_rad: 0.12
+    kp: 0.10
+    kd: 0.01
+    max_effort: 0.08
+    positive_gain: 1019.716213
+    negative_gain: 1019.716213
+    positive_offset: 0.0
+    negative_offset: 0.0
+    torque_deadband_nm: 0.0
+    pwm_limit: 80
+```
+
+`enabled=false` 时原六轴行为保持不变
+
+启用后 Joint1~Joint6 与 Tool Button 仍由同一个 `Hx10hmMotorBus`、同一个 `HiwonderBusServo` 和同一个 `SerialPort` 管理
+
+实时读取使用同一次多 ID `SYNC READ`，PWM 输出使用同一次 `SYNC WRITE`
+
+Tool Button 状态通过 `Hx10hmMotorBus::tool_button_state()` 读取
+
+```cpp
+const auto state = bus.tool_button_state();
+
+state.pos_rad;
+state.vel_rad_s;
+state.pressed;
+state.online;
+```
+
+只读真机检查
+
+```bash
+serial_arm_hiwonder_tool_button --config /path/to/hardware/right.yaml
+```
+
+低扭矩回弹测试
+
+```bash
+serial_arm_hiwonder_tool_button \
+  --config /path/to/hardware/right.yaml \
+  --spring --confirm-spring
+```
+
+`--spring` 会让 Joint1~Joint6 保持 Torque Enable + zero PWM，同时 Tool Button 使用 YAML 中的低 `kp`、`kd`、`max_effort` 和 `pwm_limit` 执行零位虚拟弹簧

@@ -150,6 +150,15 @@ std::string motor_bus_error_text(const char* operation, serial_arm::MotorBusErr 
     return message.str();
 }
 
+std::string with_tool_button_context(
+    std::string message,
+    const serial_arm::Hx10hmMotorBus* bus) {
+    if(bus != nullptr && bus->tool_button_enabled() && !bus->tool_button_state().online) {
+        message += ", ToolButton=OFFLINE";
+    }
+    return message;
+}
+
 } // namespace
 
 LeaderReadSession::~LeaderReadSession() {
@@ -239,6 +248,7 @@ void LeaderRuntime::initialize(const std::string& profile_name) {
         motor_bus.value()->capabilities());
     if(!config) throw std::runtime_error("主臂配置加载失败: " + config.error().message);
     cfg_ = config.value();
+    hiwonder_bus_ = dynamic_cast<serial_arm::Hx10hmMotorBus*>(motor_bus.value().get());
 
     const auto dynamics = dynamics_.configure(cfg_.dynamics);
     if(!dynamics) {
@@ -290,7 +300,11 @@ void LeaderRuntime::activate(serial_arm::JointImpedanceMode mode) {
     if(!initialized_) throw std::logic_error("主臂控制会话尚未初始化");
 
     const auto active = robot_.activate();
-    if(!active) throw std::runtime_error(robot_fault_text("主臂使能", active.error()));
+    if(!active) {
+        throw std::runtime_error(with_tool_button_context(
+            robot_fault_text("主臂使能", active.error()),
+            hiwonder_bus_));
+    }
 
     const auto mode_result = robot_.set_impedance_mode(mode);
     if(!mode_result) {
@@ -313,7 +327,11 @@ void LeaderRuntime::set_cmd(
 
 serial_arm::RobotCycleOutput LeaderRuntime::cycle(serial_arm::Robot::TimePoint now) {
     const auto output = robot_.cycle(now);
-    if(!output) throw std::runtime_error(robot_fault_text("主臂控制周期", output.error()));
+    if(!output) {
+        throw std::runtime_error(with_tool_button_context(
+            robot_fault_text("主臂控制周期", output.error()),
+            hiwonder_bus_));
+    }
     return output.value();
 }
 
@@ -341,6 +359,16 @@ const serial_arm::JointState& LeaderRuntime::joint_state() const noexcept {
 
 const serial_arm::RobotCfg& LeaderRuntime::config() const noexcept {
     return cfg_;
+}
+
+bool LeaderRuntime::tool_button_pressed() const noexcept {
+    return hiwonder_bus_ != nullptr && hiwonder_bus_->tool_button_state().online &&
+        hiwonder_bus_->tool_button_state().pressed;
+}
+
+serial_arm::ToolButtonState LeaderRuntime::tool_button_state() const noexcept {
+    if(hiwonder_bus_ == nullptr) return {};
+    return hiwonder_bus_->tool_button_state();
 }
 
 } // namespace tea_teleop

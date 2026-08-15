@@ -55,6 +55,7 @@ target_link_libraries(
     serial_arm::robot
     serial_arm::config
     serial_arm::dynamics
+    serial_arm_hardware_hiwonder
     Threads::Threads
     ${TEA_YAML_CPP_TARGET}
 )

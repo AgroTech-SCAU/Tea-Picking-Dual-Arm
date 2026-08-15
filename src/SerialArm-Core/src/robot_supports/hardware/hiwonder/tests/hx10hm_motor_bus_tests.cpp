@@ -99,6 +99,47 @@ TEST(Hx10hmMotorBusConfigTests, LoadsExplicitBackendMappingTestFixture) {
     EXPECT_DOUBLE_EQ(bus.capabilities()[0].max_effort, 2.0);
 }
 
+TEST(Hx10hmMotorBusConfigTests, LoadsToolButtonConfigurationWithoutChangingRobotContract) {
+    serial_arm::Hx10hmMotorBus bus;
+    const auto configured = bus.configure(fixture("tool_button_test_fixture.yaml"));
+    ASSERT_TRUE(configured);
+    EXPECT_TRUE(bus.tool_button_enabled());
+    EXPECT_EQ(bus.size(), 6U);
+    EXPECT_EQ(bus.capabilities().size(), 6U);
+}
+
+TEST(Hx10hmMotorBusConfigTests, DisabledToolButtonPreservesSixAxisContract) {
+    auto cfg = valid_cfg();
+    cfg.tool_button.enabled = false;
+    serial_arm::Hx10hmMotorBus bus;
+    ASSERT_TRUE(bus.configure(cfg));
+    EXPECT_FALSE(bus.tool_button_enabled());
+    EXPECT_EQ(bus.size(), 6U);
+    EXPECT_EQ(bus.capabilities().size(), 6U);
+    EXPECT_FALSE(bus.tool_button_state().online);
+}
+
+TEST(Hx10hmMotorBusConfigTests, RejectsToolButtonServoIdCollision) {
+    auto cfg = valid_cfg();
+    cfg.tool_button.enabled = true;
+    cfg.tool_button.servo_id = cfg.actuators[2].servo_id;
+    serial_arm::Hx10hmMotorBus bus;
+    const auto configured = bus.configure(cfg);
+    ASSERT_FALSE(configured);
+    EXPECT_EQ(configured.error(), serial_arm::MotorBusErr::INVALID_CFG);
+}
+
+TEST(Hx10hmMotorBusConfigTests, RejectsInvalidToolButtonHysteresis) {
+    auto cfg = valid_cfg();
+    cfg.tool_button.enabled = true;
+    cfg.tool_button.press_threshold_rad = 0.12;
+    cfg.tool_button.release_threshold_rad = 0.12;
+    serial_arm::Hx10hmMotorBus bus;
+    const auto configured = bus.configure(cfg);
+    ASSERT_FALSE(configured);
+    EXPECT_EQ(configured.error(), serial_arm::MotorBusErr::INVALID_CFG);
+}
+
 TEST(Hx10hmMotorBusConfigTests, LoadsOfficialDerivedNominalConfiguration) {
     serial_arm::Hx10hmMotorBus bus;
     const auto configured = bus.configure(SERIAL_ARM_HIWONDER_NOMINAL_CONFIG);
@@ -211,6 +252,98 @@ TEST(Hx10hmMotorBusConversionTests, DecodesVelocityBit15AndDirection) {
         100.0 * RAD_PER_STEP, 1e-12);
     EXPECT_NEAR(serial_arm::Hx10hmMotorBus::raw_velocity_to_rad_per_second(0x8064U, -1),
         100.0 * RAD_PER_STEP, 1e-12);
+}
+
+TEST(Hx10hmMotorBusToolButtonTests, AppliesPressReleaseHysteresis) {
+    constexpr double press = 0.20;
+    constexpr double release = 0.12;
+
+    bool pressed = false;
+    pressed = serial_arm::Hx10hmMotorBus::update_tool_button_pressed(
+        pressed, 0.19, press, release);
+    EXPECT_FALSE(pressed);
+
+    pressed = serial_arm::Hx10hmMotorBus::update_tool_button_pressed(
+        pressed, 0.21, press, release);
+    EXPECT_TRUE(pressed);
+
+    pressed = serial_arm::Hx10hmMotorBus::update_tool_button_pressed(
+        pressed, 0.15, press, release);
+    EXPECT_TRUE(pressed);
+
+    pressed = serial_arm::Hx10hmMotorBus::update_tool_button_pressed(
+        pressed, 0.11, press, release);
+    EXPECT_FALSE(pressed);
+}
+
+TEST(Hx10hmMotorBusToolButtonTests, ReusesCalibrationWrapForToolPosition) {
+    const auto encoder_zero = serial_arm::Hx10hmMotorBus::normalize_position_raw(2048, 1825);
+    const auto before = serial_arm::Hx10hmMotorBus::normalize_position_raw(2270, 1825);
+    const auto after = serial_arm::Hx10hmMotorBus::normalize_position_raw(-1825, 1825);
+    const double q_before = serial_arm::Hx10hmMotorBus::raw_position_to_rad(
+        before, encoder_zero, 1);
+    const double q_after = serial_arm::Hx10hmMotorBus::raw_position_to_rad(
+        after, encoder_zero, 1);
+    EXPECT_NEAR(q_after - q_before, RAD_PER_STEP, 1e-12);
+}
+
+TEST(Hx10hmMotorBusToolButtonTests, LimitsVirtualSpringByEffortAndPwm) {
+    auto cfg = valid_cfg();
+    cfg.tool_button.enabled = true;
+    cfg.tool_button.servo_id = 7U;
+    cfg.tool_button.direction = 1;
+    cfg.tool_button.kp = 1.0;
+    cfg.tool_button.kd = 0.0;
+    cfg.tool_button.max_effort = 0.08;
+    cfg.tool_button.positive_gain = 1019.716213;
+    cfg.tool_button.negative_gain = 1019.716213;
+    cfg.tool_button.pwm_limit = 80;
+
+    serial_arm::Hx10hmMotorBus bus;
+    ASSERT_TRUE(bus.configure(cfg));
+
+    serial_arm::ToolButtonState state;
+    state.pos_rad = 1.0;
+    state.vel_rad_s = 0.0;
+    state.online = true;
+    const auto pwm = bus.tool_button_pwm(state);
+    ASSERT_TRUE(pwm);
+    EXPECT_EQ(*pwm, -80);
+}
+
+TEST(Hx10hmMotorBusToolButtonTests, AppliesDirectionToVirtualSpringPwm) {
+    auto cfg = valid_cfg();
+    cfg.tool_button.enabled = true;
+    cfg.tool_button.servo_id = 7U;
+    cfg.tool_button.direction = -1;
+    cfg.tool_button.kp = 1.0;
+    cfg.tool_button.kd = 0.0;
+    cfg.tool_button.max_effort = 0.08;
+    cfg.tool_button.pwm_limit = 80;
+
+    serial_arm::Hx10hmMotorBus bus;
+    ASSERT_TRUE(bus.configure(cfg));
+
+    serial_arm::ToolButtonState state;
+    state.pos_rad = 1.0;
+    state.online = true;
+    const auto pwm = bus.tool_button_pwm(state);
+    ASSERT_TRUE(pwm);
+    EXPECT_EQ(*pwm, 80);
+}
+
+TEST(Hx10hmMotorBusToolButtonTests, RejectsOfflineToolStateForControl) {
+    auto cfg = valid_cfg();
+    cfg.tool_button.enabled = true;
+    cfg.tool_button.servo_id = 7U;
+    serial_arm::Hx10hmMotorBus bus;
+    ASSERT_TRUE(bus.configure(cfg));
+
+    serial_arm::ToolButtonState state;
+    state.online = false;
+    const auto pwm = bus.tool_button_pwm(state);
+    ASSERT_FALSE(pwm);
+    EXPECT_EQ(pwm.error(), serial_arm::MotorBusErr::INVALID_STATE);
 }
 
 TEST(Hx10hmMotorBusMitTests, ComputesTauOnlyCommand) {

@@ -42,6 +42,7 @@ struct CliOptions {
     std::string hardware_config;
     std::string robot_profile;
     std::string profiles_file;
+    HardwareConfigOverrides hardware_overrides;
     bool show_help{ false };
     bool compare_config{ false };
 };
@@ -325,6 +326,34 @@ bool parse_cli(int argc, char** argv, CliOptions& options) {
             if(i + 1 >= argc) return false;
             options.profiles_file = argv[++i];
         }
+        else if(arg == "--serial-port") {
+            if(i + 1 >= argc) return false;
+            options.hardware_overrides.serial_port = argv[++i];
+            if(options.hardware_overrides.serial_port->empty()) {
+                std::cerr << "Invalid serial-port: empty value\n";
+                return false;
+            }
+        }
+        else if(arg == "--baudrate") {
+            if(i + 1 >= argc) return false;
+            const std::string value = argv[++i];
+            std::istringstream input(value);
+            int baudrate = 0;
+            char extra = 0;
+            if(!(input >> baudrate) || (input >> extra) || baudrate <= 0) {
+                std::cerr << "Invalid baudrate: " << value << '\n';
+                return false;
+            }
+            options.hardware_overrides.baudrate = baudrate;
+        }
+        else if(arg == "--bus") {
+            if(i + 1 >= argc) return false;
+            options.hardware_overrides.bus = argv[++i];
+            if(options.hardware_overrides.bus->empty()) {
+                std::cerr << "Invalid bus: empty value\n";
+                return false;
+            }
+        }
         else if(arg == "--compare-config") {
             if(i + 2 >= argc) return false;
             options.compare_config = true;
@@ -343,9 +372,12 @@ bool parse_cli(int argc, char** argv, CliOptions& options) {
 }
 
 void print_usage(const char* program) {
-    std::cout << "用法: " << program << " --robot-profile <name> [--profile-file <path>]\n";
+    std::cout << "用法: " << program << " --robot-profile <name> [--profile-file <path>] [--serial-port <path>] [--baudrate <n>] [--bus <name>]\n";
     std::cout << "路径: " << program << " [--config <path>] [--hardware-plugin <name>] [--hardware-config <path>]\n";
     std::cout << "比较: " << program << " --hardware-plugin <name> --hardware-config <path> --compare-config <config-a.yaml> <config-b.yaml>\n";
+    std::cout << "  --serial-port  Override serial port from robot profile hardware configuration\n";
+    std::cout << "  --baudrate     Override serial baudrate\n";
+    std::cout << "  --bus          Override hardware bus\n";
     std::cout << "说明: runtime.write_enabled=true 使用 Hardware Backend；false 使用离线 mock 后端\n";
 }
 
@@ -460,7 +492,7 @@ private:
 
 class TerminalApp {
 public:
-    TerminalApp(RobotCfg cfg, std::string config_path, std::string hardware_plugin, std::string hardware_config) : cfg_(std::move(cfg)), config_path_(std::move(config_path)), hardware_plugin_(std::move(hardware_plugin)), hardware_config_(std::move(hardware_config)) {
+    TerminalApp(RobotCfg cfg, std::string config_path, std::string hardware_plugin, std::string hardware_config, HardwareConfigOverrides hardware_overrides) : cfg_(std::move(cfg)), config_path_(std::move(config_path)), hardware_plugin_(std::move(hardware_plugin)), hardware_config_(std::move(hardware_config)), hardware_overrides_(std::move(hardware_overrides)) {
 
     }
 
@@ -474,7 +506,7 @@ public:
         const auto dynamics_result = dynamics_.configure(cfg_.dynamics);
         if(!dynamics_result) return tl::make_unexpected("Dynamics configure() 失败: " + to_string(dynamics_result.error()));
 
-        auto hardware_result = hardware_loader_.load(hardware_plugin_, hardware_config_);
+        auto hardware_result = hardware_loader_.load(hardware_plugin_, hardware_config_, hardware_overrides_);
         if(!hardware_result) return tl::make_unexpected("HardwareLoader 失败");
         std::unique_ptr<MotorBus> hardware_bus = std::move(hardware_result.value());
         actuator_info_ = hardware_bus->capabilities();
@@ -1433,6 +1465,7 @@ private:
     std::string config_path_;
     std::string hardware_plugin_;
     std::string hardware_config_;
+    HardwareConfigOverrides hardware_overrides_;
     Dynamics dynamics_;
     HardwareLoader hardware_loader_;
     Robot robot_;
@@ -1494,7 +1527,7 @@ int main(int argc, char** argv) {
     }
     if(options.compare_config) {
         HardwareLoader compare_loader;
-        auto compare_bus = compare_loader.load(options.hardware_plugin, options.hardware_config);
+        auto compare_bus = compare_loader.load(options.hardware_plugin, options.hardware_config, options.hardware_overrides);
         if(!compare_bus) {
             std::cerr << "HardwareLoader 失败\n";
             return EXIT_FAILURE;
@@ -1514,7 +1547,7 @@ int main(int argc, char** argv) {
         return EXIT_SUCCESS;
     }
     HardwareLoader config_loader;
-    auto config_bus = config_loader.load(options.hardware_plugin, options.hardware_config);
+    auto config_bus = config_loader.load(options.hardware_plugin, options.hardware_config, options.hardware_overrides);
     if(!config_bus) {
         std::cerr << "HardwareLoader 失败\n";
         return EXIT_FAILURE;
@@ -1525,7 +1558,7 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    TerminalApp app(cfg_result.value(), options.config_path, options.hardware_plugin, options.hardware_config);
+    TerminalApp app(cfg_result.value(), options.config_path, options.hardware_plugin, options.hardware_config, options.hardware_overrides);
     const auto init_result = app.initialize();
     if(!init_result) {
         std::cerr << init_result.error() << '\n';

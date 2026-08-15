@@ -10,6 +10,7 @@
 #include "serial_arm/hardware/hardware_loader.hpp"
 #include "serial_arm/hardware/motor_bus.hpp"
 #include "serial_arm/robot.hpp"
+#include "serial_arm_hardware_hiwonder/hx10hm_motor_bus.hpp"
 
 namespace tea_teleop {
 
@@ -66,12 +67,15 @@ public:
     [[nodiscard]] serial_arm::RobotState state() const noexcept;
     [[nodiscard]] const serial_arm::JointState& joint_state() const noexcept;
     [[nodiscard]] const serial_arm::RobotCfg& config() const noexcept;
+    [[nodiscard]] bool tool_button_pressed() const noexcept;
+    [[nodiscard]] serial_arm::ToolButtonState tool_button_state() const noexcept;
 
 private:
     serial_arm::RobotCfg cfg_;
     serial_arm::Dynamics dynamics_;
     serial_arm::HardwareLoader loader_;
     serial_arm::Robot robot_;
+    serial_arm::Hx10hmMotorBus* hiwonder_bus_{ nullptr }; ///< Robot 持有 Backend，此处仅用于读取 Tool Button 状态
     bool initialized_{ false };
 };
 
