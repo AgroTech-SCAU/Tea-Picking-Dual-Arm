@@ -14,7 +14,7 @@
 
 hiwonder:
   # 01 serial
-  serial_port: /dev/ttyACM1              # 左主臂 HX 总线串口，可改为 /dev/serial/by-id/... 提高设备名稳定性
+  serial_port: /dev/ttyACM0              # 左主臂 HX 总线串口，可改为 /dev/serial/by-id/... 提高设备名稳定性
   baudrate: 1000000                      # HX-10HM 总线波特率
   read_timeout_ms: 8                     # 单次实时状态读取超时 ms
   write_timeout_ms: 20                   # 写命令及状态 ACK 超时 ms
@@ -33,21 +33,21 @@ hiwonder:
   # 03 tool_button
   # Tool Button 与 Joint1~Joint6 复用同一个 HiwonderBusServo / SerialPort
   tool_button:
-    enabled: false
+    enabled: true
     servo_id: 7
     raw_zero: 2048
-    direction: 1
-    press_threshold_rad: 0.20
-    release_threshold_rad: 0.12
-    kp: 0.10
+    direction: -1
+    press_threshold_rad: 0.25
+    release_threshold_rad: 0.15
+    kp: 1.00
     kd: 0.01
-    max_effort: 0.08
+    max_effort: 0.3
     positive_gain: 1019.716213
     negative_gain: 1019.716213
     positive_offset: 0.0
     negative_offset: 0.0
     torque_deadband_nm: 0.0
-    pwm_limit: 80
+    pwm_limit: 300
 
   # 04 actuators
   # 公共参数说明
