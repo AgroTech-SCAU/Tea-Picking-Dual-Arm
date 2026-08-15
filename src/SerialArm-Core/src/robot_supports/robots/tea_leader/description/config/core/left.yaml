@@ -14,12 +14,12 @@
 
 # 01 model
 model:
-  urdf_path: ../../model/left/urdf/tea_leader_left.urdf               # URDF 路径，相对当前 YAML
+  urdf_path: ../../model/left/urdf/tea_leader_left.urdf                 # URDF 路径，相对当前 YAML
   joint_names: [left_joint1, left_joint2, left_joint3, left_joint4, left_joint5, left_joint6]  # 受控关节顺序
   base_frame: base_link                                                 # 动力学基坐标系
-  tool_frame: left_link6                                               # 动力学末端坐标系
-  gravity: [0.0, 0.0, -9.81]                                           # 世界坐标系重力加速度 m/s^2
-  gravity_scale: [0.3, 0.3, 0.3, 0.3, 0.3, 0.3]                        # 各轴重力补偿比例，暂沿用右臂实测值
+  tool_frame: left_link6                                                # 动力学末端坐标系
+  gravity: [0.0, 0.0, -9.81]                                            # 世界坐标系重力加速度 m/s^2
+  gravity_scale: [0.38, 0.38, 0.38, 0.38, 0.38, 0.38]                   # 各轴重力补偿比例
 
 # 02 calibration
 calibration:
