@@ -861,12 +861,23 @@ void DualTeaTeleop::teleop(TeleopMode mode) {
             left_follower = left_rm_.read_all_degree();
             right_follower = right_rm_.read_all_degree();
 
+            const float left_actual_error =
+                max_abs_difference(left_target, left_follower);
+            const float right_actual_error =
+                max_abs_difference(right_target, right_follower);
+
+            if(left_actual_error > kFullAlignToleranceDegree ||
+                right_actual_error > kFullAlignToleranceDegree) {
+                throw std::runtime_error(
+                    "双从臂实际位置尚未完成启动对齐");
+            }
+
             std::cout
                 << "双从臂启动对齐完成 | 左最大角差="
                 << std::fixed << std::setprecision(1)
-                << max_abs_difference(left_target, left_follower)
+                << left_actual_error
                 << " deg | 右最大角差="
-                << max_abs_difference(right_target, right_follower)
+                << right_actual_error
                 << " deg\n";
         }
 
