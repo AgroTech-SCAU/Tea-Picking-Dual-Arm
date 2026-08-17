@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <mutex>
 #include <string>
 
 #include "rm_service.h"
@@ -87,7 +88,14 @@ public:
     void stop();
 
 private:
+    void acquire_sdk();
+    void release_sdk() noexcept;
+
+private:
     RM_Service api_;                        ///< SDK 接口对象
     rm_robot_handle* handle_{ nullptr };    ///< SDK 机械臂句柄，非空表示已连接
-    bool sdk_initialized_{ false };         ///< SDK 初始化状态，true 表示已初始化
+    bool sdk_acquired_{ false };
+
+    static inline std::mutex sdk_mutex_;
+    static inline std::size_t sdk_users_{ 0 };
 };

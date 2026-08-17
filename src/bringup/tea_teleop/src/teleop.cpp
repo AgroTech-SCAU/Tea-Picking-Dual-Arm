@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <exception>
 #include <cmath>
@@ -12,8 +11,6 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
-#include <mutex>
-#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -158,7 +155,7 @@ TeleopConfig load_teleop_config(const std::string& path) {
         throw std::runtime_error("leader_home.speed_degree_s 必须位于 [2, 30]");
     }
     if(config.leader_home_tolerance_degree < 0.5F ||
-       config.leader_home_tolerance_degree > 5.0F) {
+        config.leader_home_tolerance_degree > 5.0F) {
         throw std::runtime_error("leader_home.tolerance_degree 必须位于 [0.5, 5]");
     }
     if(config.leader_home_timeout_s < 5 || config.leader_home_timeout_s > 60) {
@@ -261,131 +258,11 @@ float max_abs_difference(
     return summarize_difference(lhs, rhs).max_abs_degree;
 }
 
-/**
- * @brief 主臂后台控制循环
- *
- * SerialArm 保持独立 100 Hz 控制周期，RM65-B 的网络调用即使偶发阻塞
- * 也不会让主臂状态超时
- */
-class LeaderCycleWorker final {
-public:
-    explicit LeaderCycleWorker(tea_teleop::LeaderRuntime& leader)
-        : leader_(leader) {}
-
-    ~LeaderCycleWorker() {
-        stop();
-    }
-
-    LeaderCycleWorker(const LeaderCycleWorker&) = delete;
-    LeaderCycleWorker& operator=(const LeaderCycleWorker&) = delete;
-
-    void start() {
-        if(worker_.joinable()) throw std::logic_error("主臂后台控制已经启动");
-
-        const double frequency_hz = leader_.control_frequency_hz();
-        if(!std::isfinite(frequency_hz) || frequency_hz <= 0.0) {
-            throw std::runtime_error("主臂控制频率无效");
-        }
-
-        period_ = std::chrono::duration_cast<Clock::duration>(
-            std::chrono::duration<double>(1.0 / frequency_hz));
-        stop_requested_.store(false);
-        worker_ = std::thread([this]() { run(); });
-    }
-
-    void stop() noexcept {
-        stop_requested_.store(true);
-        if(worker_.joinable()) worker_.join();
-    }
-
-    serial_arm::RobotCycleOutput latest() const {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if(fault_) std::rethrow_exception(fault_);
-        if(!latest_) throw std::runtime_error("主臂后台控制尚未产生有效状态");
-        return *latest_;
-    }
-
-    void wait_until_ready(std::chrono::milliseconds timeout) const {
-        const auto deadline = Clock::now() + timeout;
-        for(;;) {
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                if(fault_) std::rethrow_exception(fault_);
-                if(latest_) return;
-            }
-
-            if(Clock::now() >= deadline) {
-                throw std::runtime_error("等待主臂后台控制状态超时");
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds{ 2 });
-        }
-    }
-
-    void rethrow_if_failed() const {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if(fault_) std::rethrow_exception(fault_);
-    }
-
-    [[nodiscard]] std::uint64_t cycle_count() const noexcept {
-        return cycle_count_.load();
-    }
-
-    [[nodiscard]] std::uint64_t overrun_count() const noexcept {
-        return overrun_count_.load();
-    }
-
-private:
-    using Clock = std::chrono::steady_clock;
-
-    void run() noexcept {
-        auto next_tick = Clock::now();
-
-        while(!stop_requested_.load()) {
-            const auto cycle_start = Clock::now();
-
-            try {
-                auto output = leader_.cycle(cycle_start);
-                {
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    latest_ = std::move(output);
-                }
-                ++cycle_count_;
-            }
-            catch(...) {
-                std::lock_guard<std::mutex> lock(mutex_);
-                fault_ = std::current_exception();
-                break;
-            }
-
-            next_tick += period_;
-            const auto after_work = Clock::now();
-            if(next_tick > after_work) {
-                std::this_thread::sleep_until(next_tick);
-            }
-            else {
-                ++overrun_count_;
-                next_tick = after_work;
-            }
-        }
-    }
-
-    tea_teleop::LeaderRuntime& leader_;
-    Clock::duration period_{};
-    std::atomic<bool> stop_requested_{ false };
-    std::atomic<std::uint64_t> cycle_count_{ 0U };
-    std::atomic<std::uint64_t> overrun_count_{ 0U };
-
-    mutable std::mutex mutex_;
-    std::optional<serial_arm::RobotCycleOutput> latest_;
-    std::exception_ptr fault_;
-    std::thread worker_;
-};
-
 } // namespace
 
 TeaTeleop::TeaTeleop(TeleopConfig config)
     : config_(std::move(config)),
-      default_config_(config_) {}
+    default_config_(config_) {}
 
 int TeaTeleop::run() {
     std::signal(SIGINT, signal_handler);
@@ -790,7 +667,7 @@ void TeaTeleop::teleop(TeleopMode mode) {
 
     clear_interrupt();
     bool rm_stop_ok = true;
-    std::unique_ptr<LeaderCycleWorker> worker;
+    std::unique_ptr<tea_teleop::LeaderCycleWorker> worker;
 
     auto safe_shutdown = [&]() noexcept {
         try {
@@ -806,12 +683,12 @@ void TeaTeleop::teleop(TeleopMode mode) {
         const bool leader_stop_ok = leader.safe_deactivate();
         if(!leader_stop_ok) std::cerr << "[警告] 主臂安全失能失败\n";
         return rm_stop_ok && leader_stop_ok;
-    };
+        };
 
     try {
         leader.activate(serial_arm::JointImpedanceMode::COMPLIANT_DRAG);
 
-        worker = std::make_unique<LeaderCycleWorker>(leader);
+        worker = std::make_unique<tea_teleop::LeaderCycleWorker>(leader);
         worker->start();
         worker->wait_until_ready(std::chrono::milliseconds{ 500 });
 
@@ -906,7 +783,7 @@ void TeaTeleop::teleop(TeleopMode mode) {
             const auto cycle_start = std::chrono::steady_clock::now();
             if(config_.teleop_duration_s >= 0 &&
                 cycle_start - start_time >=
-                    std::chrono::seconds{ config_.teleop_duration_s }) {
+                std::chrono::seconds{ config_.teleop_duration_s }) {
                 break;
             }
 

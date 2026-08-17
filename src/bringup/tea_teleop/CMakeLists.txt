@@ -34,10 +34,38 @@ add_subdirectory(
     ${CMAKE_CURRENT_BINARY_DIR}/rm_bringup
 )
 
+add_library(
+    tea_teleop_runtime STATIC
+    src/leader_runtime.cpp
+)
+
+target_include_directories(
+    tea_teleop_runtime
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+# ament_target_dependencies() 在 ROS 2 Humble 中会使用 plain signature 调用
+# target_link_libraries()，因此这里也统一使用 plain signature，避免 CMake
+# 报错“keyword signature 与 plain signature 混用”
+target_link_libraries(
+    tea_teleop_runtime
+    PUBLIC
+        serial_arm::robot
+        serial_arm::config
+        serial_arm::dynamics
+        serial_arm_hardware_hiwonder
+        Threads::Threads
+)
+
+target_compile_features(
+    tea_teleop_runtime
+    PUBLIC cxx_std_17
+)
+
 add_executable(
     teleop
     src/teleop.cpp
-    src/leader_runtime.cpp
 )
 
 target_include_directories(
@@ -46,16 +74,10 @@ target_include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# ament_target_dependencies() 在 ROS 2 Humble 中会使用 plain signature 调用
-# target_link_libraries()，因此这里也统一使用 plain signature，避免 CMake
-# 报错“keyword signature 与 plain signature 混用”
 target_link_libraries(
     teleop
+    tea_teleop_runtime
     rm_bringup
-    serial_arm::robot
-    serial_arm::config
-    serial_arm::dynamics
-    serial_arm_hardware_hiwonder
     Threads::Threads
     ${TEA_YAML_CPP_TARGET}
 )
@@ -64,19 +86,51 @@ ament_target_dependencies(teleop ament_index_cpp)
 
 target_compile_features(teleop PRIVATE cxx_std_17)
 
+add_executable(
+    dual_teleop
+    src/dual_teleop.cpp
+)
+
+target_include_directories(
+    dual_teleop
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(
+    dual_teleop
+    tea_teleop_runtime
+    rm_bringup
+    Threads::Threads
+    ${TEA_YAML_CPP_TARGET}
+)
+
+ament_target_dependencies(
+    dual_teleop
+    ament_index_cpp
+)
+
+target_compile_features(
+    dual_teleop
+    PRIVATE cxx_std_17
+)
+
 set(REALMAN_SDK_LIBRARY
     ${TEA_SRC_ROOT}/hardware/rm65b/rm_driver/lib/libapi_cpp.so
 )
 
 set_target_properties(
     teleop
+    dual_teleop
     PROPERTIES
         BUILD_RPATH ${TEA_SRC_ROOT}/hardware/rm65b/rm_driver/lib
         INSTALL_RPATH "$ORIGIN"
 )
 
 install(
-    TARGETS teleop
+    TARGETS
+        teleop
+        dual_teleop
     DESTINATION lib/${PROJECT_NAME}
 )
 

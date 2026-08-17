@@ -15,10 +15,10 @@
 
 Tea-Picking-Dual-Arm 用于茶叶采摘主从遥操作与示范数据采集
 
-HX-10HM 主臂由 SerialArm-Core 负责状态读取、Software MIT、重力补偿和安全失能，Tea Teleop 负责读取补偿状态下的主臂关节位置并映射到 RM65-B
+HX-10HM 主臂由 SerialArm-Core 负责状态读取、Software MIT、重力补偿和安全失能，Tea Teleop 负责读取补偿状态下的主臂关节位置并映射到 RM65-B；仓库同时保留单臂 `teleop` 和双臂 `dual_teleop`，单臂用于回归与单侧联调，双臂用于左右两套主从通道的协同遥操作
 
 ```text
-HX-10HM × 6
+HX-10HM Leader
     ↓
 SerialArm Hiwonder Backend
     ↓
@@ -40,7 +40,12 @@ tea_leader_right
 tea_leader_left
 ```
 
-当前 `tea_teleop` 仍按单主臂到单 RM65-B 的方式运行，默认使用右主臂
+双臂链路按左右两套通道运行
+
+```text
+Left HX-10HM  -> LeaderRuntime(left)  -> Left RM65-B
+Right HX-10HM -> LeaderRuntime(right) -> Right RM65-B
+```
 
 ## SerialArm-Core 基线
 
@@ -59,6 +64,12 @@ Tag: v0.3.0
 - 主从臂依次归零
 - 慢速遥操作
 - 正常遥操作
+- 双主臂 / 双从臂读取
+- 双主从状态对照
+- 双主臂顺序归零
+- 双从臂顺序归零
+- 双臂慢速遥操作
+- 双臂正常遥操作
 - RM65-B 软件停止
 - 主臂安全卸力
 - SerialArm 重力补偿
@@ -81,7 +92,11 @@ src/
 │       └── robots/tea_leader/
 ├── bringup/
 │   └── tea_teleop/
-│       └── config/teleop.yaml
+│       ├── config/
+│       │   ├── teleop.yaml
+│       │   └── dual_teleop.yaml
+│       ├── include/tea_teleop/
+│       └── src/
 └── hardware/
     └── rm65b/
         ├── rm_bringup/
@@ -119,10 +134,12 @@ source install/setup.bash
 └── src/SerialArm-Core/src/robot_supports/robots/tea_leader/description/config/
 
 从臂与遥操作配置
-└── src/bringup/tea_teleop/config/teleop.yaml
+└── src/bringup/tea_teleop/config/
+    ├── teleop.yaml
+    └── dual_teleop.yaml
 ```
 
-主臂的串口、舵机 ID、零位、重力补偿和控制参数不要写到 `teleop.yaml`
+主臂的串口、舵机 ID、零位、重力补偿和控制参数不要写到 `teleop.yaml` 或 `dual_teleop.yaml`
 
 从臂的 IP、端口和主从映射不要写到 SerialArm Hardware YAML
 
@@ -302,7 +319,7 @@ safety_policy:
 
 ### 从臂与遥操作配置
 
-从臂 RM65-B 的连接参数和遥操作参数统一位于
+单臂 RM65-B 的连接参数和遥操作参数位于
 
 ```text
 src/bringup/tea_teleop/config/teleop.yaml
@@ -321,10 +338,10 @@ follower:
 
 teleop:
   duration_s: -1
-  period_ms: 20
+  period_ms: 10
   slow_max_step_degree: 1.0
   max_start_error_degree: 30.0
-  mapping_direction: [1, 1, -1, 1, 1, 1]
+  mapping_direction: [-1, 1, -1, 1, 1, 1]
 
 leader_home:
   speed_degree_s: 10.0
@@ -333,7 +350,7 @@ leader_home:
 ```
 
 ```text
-J1  +1
+J1  -1
 J2  +1
 J3  -1
 J4  +1
@@ -350,6 +367,45 @@ J6  +1
 ```bash
 ros2 run tea_teleop teleop --config /path/to/teleop.yaml
 ```
+
+双臂 RM65-B 的连接参数和左右映射位于
+
+```text
+src/bringup/tea_teleop/config/dual_teleop.yaml
+```
+
+默认结构
+
+```yaml
+left:
+  leader_profile: tea_leader_left
+  follower:
+    ip: "<LEFT_RM65B_IP>"
+    port: 8080
+    home_speed_percent: 10
+  mapping_direction: [-1, 1, -1, 1, 1, 1]
+
+right:
+  leader_profile: tea_leader_right
+  follower:
+    ip: "192.168.1.18"
+    port: 8080
+    home_speed_percent: 10
+  mapping_direction: [-1, 1, -1, 1, 1, 1]
+
+teleop:
+  duration_s: -1
+  period_ms: 10
+  slow_max_step_degree: 1.0
+  max_start_error_degree: 30.0
+
+leader_home:
+  speed_degree_s: 10.0
+  tolerance_degree: 2.0
+  timeout_s: 30
+```
+
+`period_ms` 在双臂模式中表示一轮左右从臂顺序发送的周期，不是左右各自独立的周期
 
 ### 主臂独立检查
 
@@ -381,7 +437,7 @@ serial_arm_terminal --robot-profile tea_leader_left
 
 ## 运行
 
-默认使用 `src/bringup/tea_teleop/config/teleop.yaml`
+单臂默认使用 `src/bringup/tea_teleop/config/teleop.yaml`
 
 ```bash
 ros2 run tea_teleop teleop
@@ -401,6 +457,33 @@ ros2 run tea_teleop teleop
 9. 修改运行配置
 10. 从臂软件停止
 11. 主臂卸力
+0. 退出
+```
+
+双臂默认使用 `src/bringup/tea_teleop/config/dual_teleop.yaml`
+
+```bash
+ros2 run tea_teleop dual_teleop
+```
+
+也可以指定双臂配置
+
+```bash
+ros2 run tea_teleop dual_teleop --config /path/to/dual_teleop.yaml
+```
+
+双臂主菜单
+
+```text
+1. 读取双主臂 / 双从臂
+2. 左右主从状态对照
+3. 双主臂归零
+4. 双从臂归零
+5. 全部归零
+6. 双臂慢速遥操作
+7. 双臂遥操作
+8. 双从臂软件停止
+9. 双主臂卸力
 0. 退出
 ```
 
@@ -460,11 +543,11 @@ COMPLIANT_DRAG + GRAVITY
 正常遥操作结束或 Ctrl+C
 
 ```text
-RM65-B stop
+RM65-B stop（双臂模式下左右都 stop）
     ↓
 HX PWM = 0
     ↓
-Torque OFF
+Torque OFF（双臂模式下左右主臂都 safe_deactivate）
 ```
 
 ## License

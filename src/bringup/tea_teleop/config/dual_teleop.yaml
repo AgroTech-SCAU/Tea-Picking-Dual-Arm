@@ -1,0 +1,40 @@
+# Tea Dual Teleop 配置
+#
+# 主臂的串口、舵机 ID、重力补偿、阻抗增益和 URDF 不在此文件配置
+# 主臂配置位置：
+#   src/SerialArm-Core/src/robot_supports/robots/tea_leader/description/config/
+#   ├── core/right.yaml / core/left.yaml
+#   └── hardware/right.yaml / hardware/left.yaml
+#
+# 本文件只配置当前遥操作使用的主臂 Profile、RM65-B 连接参数和遥操作参数
+
+left:
+  leader_profile: tea_leader_left
+
+  follower:
+    ip: "192.168.1.18"
+    port: 8080
+    home_speed_percent: 10
+
+  mapping_direction: [-1, 1, -1, 1, 1, 1]
+
+right:
+  leader_profile: tea_leader_right
+
+  follower:
+    ip: "192.168.1.19"
+    port: 8080
+    home_speed_percent: 10
+
+  mapping_direction: [-1, 1, -1, 1, 1, 1]
+
+teleop:
+  duration_s: -1
+  period_ms: 10                          # 一轮左右从臂命令周期，目标约 100 Hz
+  slow_max_step_degree: 1.0
+  max_start_error_degree: 30.0
+
+leader_home:
+  speed_degree_s: 10.0
+  tolerance_degree: 2.0
+  timeout_s: 30
